@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>wire-test — Network Analyzer</title>
+    <link rel="stylesheet" href="../static/style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+
+    <!-- ── Header ───────────────────────────────────────────── -->
+    <header class="header">
+        <div class="header-left">
+            <h1 class="title">WIRE-TEST</h1>
+            <p class="subtitle">NETWORK SPEED & STABILITY ANALYZER</p>
+        </div>
+        <div class="header-right">
+            <span class="version">v1.0</span>
+        </div>
+    </header>
+
+    <!-- ── Progress Bar ─────────────────────────────────────── -->
+    <div class="progress-section">
+        <div class="progress-track">
+            <div class="progress-fill" id="progress-fill"></div>
+        </div>
+        <p class="status-text" id="status-text">Ready — press RUN TEST to begin</p>
+    </div>
+
+    <!-- ── Main Dashboard ───────────────────────────────────── -->
+    <main class="dashboard">
+
+        <!-- Network Identity -->
+        <section class="card card-accent" id="card-isp">
+            <h2 class="section-title">◈ &nbsp;NETWORK IDENTITY</h2>
+            <div class="divider"></div>
+            <div class="metrics">
+                <div class="metric-row">
+                    <span class="metric-key">IP Address</span>
+                    <span class="metric-value" id="isp-ip">—</span>
+                </div>
+                <div class="metric-row">
+                    <span class="metric-key">ISP / Org</span>
+                    <span class="metric-value" id="isp-org">—</span>
+                </div>
+                <div class="metric-row">
+                    <span class="metric-key">City</span>
+                    <span class="metric-value" id="isp-city">—</span>
+                </div>
+                <div class="metric-row">
+                    <span class="metric-key">Country</span>
+                    <span class="metric-value" id="isp-country">—</span>
+                </div>
+                <div class="metric-row">
+                    <span class="metric-key">Timezone</span>
+                    <span class="metric-value" id="isp-timezone">—</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- Speed Test -->
+        <section class="card" id="card-speed">
+            <h2 class="section-title">◈ &nbsp;SPEED TEST</h2>
+            <div class="divider"></div>
+
+            <div class="speed-grid">
+                <!-- Download -->
+                <div class="speed-block">
+                    <p class="speed-label">DOWNLOAD</p>
+                    <div class="speed-display">
+                        <span class="speed-value cyan" id="dl-value">—</span>
+                        <span class="speed-unit">Mbps</span>
+                    </div>
+                    <div class="quality-tag" id="dl-quality">—</div>
+                    <div class="bar-track">
+                        <div class="bar-fill cyan-bar" id="dl-bar"></div>
+                    </div>
+                </div>
+
+                <div class="speed-divider"></div>
+
+                <!-- Upload -->
+                <div class="speed-block">
+                    <p class="speed-label">UPLOAD</p>
+                    <div class="speed-display">
+                        <span class="speed-value purple" id="ul-value">—</span>
+                        <span class="speed-unit">Mbps</span>
+                    </div>
+                    <div class="quality-tag" id="ul-quality">—</div>
+                    <div class="bar-track">
+                        <div class="bar-fill purple-bar" id="ul-bar"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="divider"></div>
+            <div class="metrics">
+                <div class="metric-row">
+                    <span class="metric-key">Server</span>
+                    <span class="metric-value" id="speed-server">—</span>
+                </div>
+                <div class="metric-row">
+                    <span class="metric-key">Sponsor</span>
+                    <span class="metric-value" id="speed-sponsor">—</span>
+                </div>
+                <div class="metric-row">
+                    <span class="metric-key">Server Latency</span>
+                    <span class="metric-value" id="speed-latency">—</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- Ping & Latency -->
+        <section class="card card-purple" id="card-ping">
+            <h2 class="section-title">◈ &nbsp;PING & LATENCY</h2>
+            <div class="divider"></div>
+
+            <div class="big-metric">
+                <p class="big-label">AVG LATENCY</p>
+                <div class="big-display">
+                    <span class="big-value purple" id="ping-avg">—</span>
+                    <span class="big-unit">ms</span>
+                </div>
+            </div>
+
+            <div class="divider"></div>
+            <div class="metrics">
+                <div class="metric-row">
+                    <span class="metric-key">Min Latency</span>
+                    <span class="metric-value" id="ping-min">—</span>
+                </div>
+                <div class="metric-row">
+                    <span class="metric-key">Max Latency</span>
+                    <span class="metric-value" id="ping-max">—</span>
+                </div>
+                <div class="metric-row">
+                    <span class="metric-key">Jitter</span>
+                    <span class="metric-value" id="ping-jitter">—</span>
+                </div>
+                <div class="metric-row">
+                    <span class="metric-key">Packet Loss</span>
+                    <span class="metric-value" id="ping-loss">—</span>
+                </div>
+                <div class="metric-row">
+                    <span class="metric-key">Ping Quality</span>
+                    <span class="metric-value" id="ping-quality">—</span>
+                </div>
+                <div class="metric-row">
+                    <span class="metric-key">Jitter Quality</span>
+                    <span class="metric-value" id="ping-jitter-quality">—</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- Connection Stability -->
+        <section class="card card-yellow" id="card-stability">
+            <h2 class="section-title">◈ &nbsp;CONNECTION STABILITY</h2>
+            <div class="divider"></div>
+
+            <div class="big-metric">
+                <p class="big-label">STABILITY SCORE</p>
+                <div class="big-display">
+                    <span class="big-value yellow" id="stab-score">—</span>
+                    <span class="big-unit">/ 100</span>
+                </div>
+                <div class="bar-track wide">
+                    <div class="bar-fill yellow-bar" id="stab-bar"></div>
+                </div>
+            </div>
+
+            <div class="divider"></div>
+
+            <p class="metric-key" style="margin-bottom: 8px;">LIVE PING LOG</p>
+            <div class="ping-log" id="ping-log">
+                <span class="log-placeholder">Waiting for stability test...</span>
+            </div>
+
+            <div class="divider"></div>
+            <div class="metrics">
+                <div class="metric-row">
+                    <span class="metric-key">Avg Latency</span>
+                    <span class="metric-value" id="stab-avg">—</span>
+                </div>
+                <div class="metric-row">
+                    <span class="metric-key">Jitter</span>
+                    <span class="metric-value" id="stab-jitter">—</span>
+                </div>
+                <div class="metric-row">
+                    <span class="metric-key">Packet Loss</span>
+                    <span class="metric-value" id="stab-loss">—</span>
+                </div>
+                <div class="metric-row">
+                    <span class="metric-key">Latency Range</span>
+                    <span class="metric-value" id="stab-range">—</span>
+                </div>
+                <div class="metric-row">
+                    <span class="metric-key">Connection Type</span>
+                    <span class="metric-value" id="stab-type">—</span>
+                </div>
+                <div class="metric-row">
+                    <span class="metric-key">Label</span>
+                    <span class="metric-value" id="stab-label">—</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- Summary -->
+        <section class="card card-green" id="card-summary">
+            <h2 class="section-title">◈ &nbsp;SUMMARY</h2>
+            <div class="divider"></div>
+            <div class="metrics">
+                <div class="metric-row">
+                    <span class="metric-key">ISP</span>
+                    <span class="metric-value" id="sum-isp">—</span>
+                </div>
+                <div class="metric-row">
+                    <span class="metric-key">Ping</span>
+                    <span class="metric-value" id="sum-ping">—</span>
+                </div>
+                <div class="metric-row">
+                    <span class="metric-key">Download</span>
+                    <span class="metric-value" id="sum-download">—</span>
+                </div>
+                <div class="metric-row">
+                    <span class="metric-key">Upload</span>
+                    <span class="metric-value" id="sum-upload">—</span>
+                </div>
+                <div class="metric-row">
+                    <span class="metric-key">Stability</span>
+                    <span class="metric-value" id="sum-stability">—</span>
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- ── Footer Controls ──────────────────────────────────── -->
+    <footer class="footer">
+        <div class="stage-indicators">
+            <div class="stage" id="stage-isp">
+                <span class="dot idle">●</span>
+                <span class="stage-label">ISP</span>
+            </div>
+            <div class="stage" id="stage-ping">
+                <span class="dot idle">●</span>
+                <span class="stage-label">PING</span>
+            </div>
+            <div class="stage" id="stage-speed">
+                <span class="dot idle">●</span>
+                <span class="stage-label">SPEED</span>
+            </div>
+            <div class="stage" id="stage-stability">
+                <span class="dot idle">●</span>
+                <span class="stage-label">STABILITY</span>
+            </div>
+        </div>
+        <div class="controls">
+            <button class="btn-stop" id="stop-btn" disabled onclick="stopTest()">STOP</button>
+            <button class="btn-run" id="run-btn" onclick="startTest()">RUN TEST</button>
+        </div>
+    </footer>
+
+    <script src="../static/script.js"></script>
+</body>
+</html>

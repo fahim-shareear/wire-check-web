@@ -1,0 +1,419 @@
+/* ── Reset & Base ───────────────────────────────────────────── */
+*, *::before, *::after {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+:root {
+    --bg:           #0B0E14;
+    --surface:      #111520;
+    --border:       #1E2535;
+    --cyan:         #00D4FF;
+    --purple:       #A57FDB;
+    --green:        #A9DC76;
+    --yellow:       #FFD866;
+    --red:          #FF6188;
+    --text:         #D8DCF0;
+    --text-muted:   #7A8BA8;
+    --text-dim:     #4A5568;
+}
+
+html, body {
+    background-color: var(--bg);
+    color: var(--text);
+    font-family: "JetBrains Mono", "Fira Code", "Ubuntu Mono", monospace;
+    font-size: 13px;
+    min-height: 100vh;
+    scroll-behavior: smooth;
+}
+
+/* ── Scrollbar ──────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: var(--cyan); }
+
+/* ── Header ─────────────────────────────────────────────────── */
+.header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 28px;
+    border-bottom: 1px solid var(--border);
+    background-color: var(--bg);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+}
+
+.title {
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--cyan);
+    letter-spacing: 4px;
+}
+
+.subtitle {
+    font-size: 10px;
+    color: var(--text-muted);
+    letter-spacing: 2px;
+    margin-top: 3px;
+}
+
+.version {
+    font-size: 11px;
+    color: var(--text-dim);
+    letter-spacing: 2px;
+}
+
+/* ── Progress Section ───────────────────────────────────────── */
+.progress-section {
+    padding: 10px 28px 6px;
+    border-bottom: 1px solid var(--border);
+    background-color: var(--bg);
+    position: sticky;
+    top: 65px;
+    z-index: 99;
+}
+
+.progress-track {
+    width: 100%;
+    height: 3px;
+    background-color: var(--border);
+    border-radius: 2px;
+    overflow: hidden;
+}
+
+.progress-fill {
+    height: 100%;
+    width: 0%;
+    background-color: var(--cyan);
+    border-radius: 2px;
+    transition: width 0.4s ease;
+}
+
+.status-text {
+    font-size: 11px;
+    color: var(--text-muted);
+    letter-spacing: 1px;
+    margin-top: 6px;
+}
+
+.status-text.running { color: var(--yellow); }
+.status-text.done    { color: var(--green); }
+.status-text.error   { color: var(--red); }
+
+/* ── Dashboard ──────────────────────────────────────────────── */
+.dashboard {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 24px 20px 120px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+/* ── Cards ──────────────────────────────────────────────────── */
+.card {
+    background-color: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+}
+
+.card-accent  { border-color: #5DADE2; }
+.card-purple  { border-color: var(--purple); }
+.card-yellow  { border-color: var(--yellow); }
+.card-green   { border-color: var(--green); }
+
+/* ── Section Title ──────────────────────────────────────────── */
+.section-title {
+    font-size: 11px;
+    font-weight: 700;
+    color: #7EC8E3;
+    letter-spacing: 3px;
+    margin-bottom: 12px;
+}
+
+/* ── Divider ────────────────────────────────────────────────── */
+.divider {
+    height: 1px;
+    background-color: var(--border);
+    margin: 12px 0;
+}
+
+/* ── Metrics ────────────────────────────────────────────────── */
+.metrics {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.metric-row {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+}
+
+.metric-key {
+    font-size: 11px;
+    color: var(--text-muted);
+    letter-spacing: 1px;
+    min-width: 140px;
+    flex-shrink: 0;
+}
+
+.metric-value {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+}
+
+/* ── Speed Grid ─────────────────────────────────────────────── */
+.speed-grid {
+    display: grid;
+    grid-template-columns: 1fr 1px 1fr;
+    gap: 20px;
+    align-items: start;
+    margin: 8px 0;
+}
+
+.speed-divider {
+    background-color: var(--border);
+    height: 100%;
+    min-height: 80px;
+}
+
+.speed-block {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.speed-label {
+    font-size: 10px;
+    color: var(--text-muted);
+    letter-spacing: 2px;
+}
+
+.speed-display {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+}
+
+.speed-value {
+    font-size: 42px;
+    font-weight: 700;
+    line-height: 1;
+    letter-spacing: 1px;
+}
+
+.speed-unit {
+    font-size: 12px;
+    color: var(--text-dim);
+}
+
+/* ── Big Metric ─────────────────────────────────────────────── */
+.big-metric {
+    margin: 8px 0;
+}
+
+.big-label {
+    font-size: 10px;
+    color: var(--text-muted);
+    letter-spacing: 2px;
+    margin-bottom: 4px;
+}
+
+.big-display {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+}
+
+.big-value {
+    font-size: 48px;
+    font-weight: 700;
+    line-height: 1;
+    letter-spacing: 1px;
+}
+
+.big-unit {
+    font-size: 14px;
+    color: var(--text-dim);
+}
+
+/* ── Colors ─────────────────────────────────────────────────── */
+.cyan   { color: var(--cyan); }
+.purple { color: var(--purple); }
+.yellow { color: var(--yellow); }
+.green  { color: var(--green); }
+.red    { color: var(--red); }
+
+/* ── Quality Tags ───────────────────────────────────────────── */
+.quality-tag {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    color: var(--text-muted);
+}
+
+.quality-excellent { color: var(--green) !important; }
+.quality-good      { color: #5DADE2 !important; }
+.quality-average   { color: var(--yellow) !important; }
+.quality-poor      { color: var(--red) !important; }
+
+/* ── Progress Bars ──────────────────────────────────────────── */
+.bar-track {
+    height: 4px;
+    background-color: var(--border);
+    border-radius: 2px;
+    overflow: hidden;
+    width: 100%;
+    margin-top: 4px;
+}
+
+.bar-track.wide { margin-top: 10px; }
+
+.bar-fill {
+    height: 100%;
+    width: 0%;
+    border-radius: 2px;
+    transition: width 0.6s ease;
+}
+
+.cyan-bar   { background-color: var(--cyan); }
+.purple-bar { background-color: var(--purple); }
+.yellow-bar { background-color: var(--yellow); }
+
+/* ── Ping Log ───────────────────────────────────────────────── */
+.ping-log {
+    background-color: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 16px;
+    font-size: 12px;
+    color: var(--text-muted);
+    min-height: 100px;
+    max-height: 160px;
+    overflow-y: auto;
+    line-height: 1.8;
+}
+
+.log-placeholder {
+    color: var(--text-dim);
+}
+
+.log-line { display: block; }
+.log-line.timeout { color: var(--red); }
+.log-line.fast    { color: var(--green); }
+.log-line.medium  { color: var(--yellow); }
+.log-line.slow    { color: var(--red); }
+
+/* ── Footer ─────────────────────────────────────────────────── */
+.footer {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 64px;
+    background-color: var(--bg);
+    border-top: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 28px;
+    z-index: 100;
+}
+
+/* ── Stage Indicators ───────────────────────────────────────── */
+.stage-indicators {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+}
+
+.stage {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.dot {
+    font-size: 10px;
+    transition: color 0.3s ease;
+}
+
+.dot.idle    { color: var(--text-dim); }
+.dot.running { color: var(--yellow); }
+.dot.done    { color: var(--green); }
+
+.stage-label {
+    font-size: 11px;
+    color: var(--text-muted);
+    letter-spacing: 1px;
+}
+
+/* ── Buttons ────────────────────────────────────────────────── */
+.controls {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+}
+
+.btn-run, .btn-stop {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    padding: 10px 24px;
+    border-radius: 6px;
+    border: 1px solid;
+    cursor: pointer;
+    background: transparent;
+    transition: all 0.2s ease;
+}
+
+.btn-run {
+    color: var(--cyan);
+    border-color: var(--cyan);
+}
+
+.btn-run:hover {
+    background-color: var(--cyan);
+    color: var(--bg);
+}
+
+.btn-stop {
+    color: var(--red);
+    border-color: var(--red);
+}
+
+.btn-stop:hover:not(:disabled) {
+    background-color: var(--red);
+    color: var(--bg);
+}
+
+.btn-run:disabled,
+.btn-stop:disabled {
+    color: var(--text-dim);
+    border-color: var(--border);
+    cursor: not-allowed;
+}
+
+/* ── Animations ─────────────────────────────────────────────── */
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+.card { animation: fadeIn 0.3s ease; }
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0.4; }
+}
+
+.dot.running { animation: pulse 1.2s ease infinite; }
