@@ -1,6 +1,6 @@
 import requests
 
-from core.helpers import get_timestamp
+from render.core.helpers import get_timestamp
 
 
 def get_isp_info():
