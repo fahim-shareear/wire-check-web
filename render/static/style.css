@@ -417,3 +417,156 @@ html, body {
 }
 
 .dot.running { animation: pulse 1.2s ease infinite; }
+
+/* ─────────────────────────────────────────────
+   RESPONSIVE DESIGN (Mobile / Tablet)
+──────────────────────────────────────────── */
+
+/* Tablet */
+@media (max-width: 900px) {
+    .dashboard {
+        max-width: 100%;
+        padding: 20px 14px 120px;
+    }
+
+    .speed-value {
+        font-size: 34px;
+    }
+
+    .big-value {
+        font-size: 40px;
+    }
+
+    .metric-key {
+        min-width: 120px;
+    }
+}
+
+/* Mobile */
+@media (max-width: 600px) {
+
+    /* Header */
+    .header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 6px;
+        padding: 14px 16px;
+    }
+
+    .title {
+        font-size: 20px;
+        letter-spacing: 3px;
+    }
+
+    .subtitle {
+        font-size: 9px;
+    }
+
+    /* Progress */
+    .progress-section {
+        padding: 10px 16px;
+    }
+
+    /* Dashboard */
+    .dashboard {
+        padding: 16px 12px 100px;
+        gap: 12px;
+    }
+
+    /* Cards */
+    .card {
+        padding: 14px;
+        border-radius: 10px;
+    }
+
+    .section-title {
+        font-size: 10px;
+        letter-spacing: 2px;
+    }
+
+    /* Metrics stack vertically */
+    .metric-row {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 2px;
+    }
+
+    .metric-key {
+        min-width: auto;
+        font-size: 10px;
+    }
+
+    .metric-value {
+        font-size: 12px;
+    }
+
+    /* Speed section becomes vertical */
+    .speed-grid {
+        grid-template-columns: 1fr;
+        gap: 16px;
+    }
+
+    .speed-divider {
+        display: none;
+    }
+
+    .speed-value {
+        font-size: 30px;
+    }
+
+    /* Big numbers smaller */
+    .big-value {
+        font-size: 34px;
+    }
+
+    /* Footer becomes vertical */
+    .footer {
+        flex-direction: column;
+        height: auto;
+        padding: 10px 12px;
+        gap: 10px;
+    }
+
+    .stage-indicators {
+        width: 100%;
+        justify-content: space-between;
+        gap: 8px;
+    }
+
+    .stage-label {
+        font-size: 9px;
+    }
+
+    .controls {
+        width: 100%;
+        justify-content: space-between;
+    }
+
+    .btn-run, .btn-stop {
+        flex: 1;
+        padding: 10px 0;
+        font-size: 11px;
+    }
+
+    /* Ping log smaller */
+    .ping-log {
+        font-size: 11px;
+        min-height: 80px;
+        max-height: 140px;
+    }
+}
+
+/* Extra small phones */
+@media (max-width: 380px) {
+    .title {
+        font-size: 18px;
+    }
+
+    .speed-value {
+        font-size: 26px;
+    }
+
+    .big-value {
+        font-size: 30px;
+    }
+}
