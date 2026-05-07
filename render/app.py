@@ -9,7 +9,7 @@ from flask_cors import CORS
 from render.core.http_ping import run_ping_test
 from render.core.http_speed import run_speed_test
 from render.core.http_stability import run_stability_test
-from core.isp_info import get_isp_info
+from render.core.isp_info import get_isp_info
 
 app = Flask(
     __name__,
