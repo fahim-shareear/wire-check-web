@@ -1,217 +1,378 @@
-import sys
 import os
-import json
-import traceback
-
-from flask import Flask, render_template, Response, jsonify, request
-from flask_cors import CORS
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from render.core.http_ping import run_ping_test
-from render.core.http_speed import run_speed_test
-from render.core.http_stability import run_stability_test
-from render.core.isp_info import get_isp_info
+import time
+import requests
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
-app = Flask(
-    __name__,
-    template_folder=os.path.join(os.path.dirname(__file__), "templates"),
-    static_folder=os.path.join(os.path.dirname(__file__), "static"),
-)
+# ── Test endpoints ─────────────────────────────────────────────
 
-CORS(app)
+DOWNLOAD_TARGETS = [
+    "https://speed.cloudflare.com/__down?bytes=100000000",  # 100MB
+    "https://speed.cloudflare.com/__down?bytes=50000000",   # 50MB fallback
+    "https://proof.ovh.net/files/100Mb.dat",                # OVH fallback
+]
 
-
-# ─────────────────────────────────────────────
-# Client IP helper
-# ─────────────────────────────────────────────
-
-def get_client_ip():
-    forwarded_for = request.headers.get("X-Forwarded-For", "")
-    if forwarded_for:
-        return forwarded_for.split(",")[0].strip()
-
-    real_ip = request.headers.get("X-Real-IP", "").strip()
-    if real_ip:
-        return real_ip
-
-    js_ip = request.args.get("client_ip", "").strip()
-    if js_ip:
-        return js_ip
-
-    return request.remote_addr
+UPLOAD_TARGET = "https://speed.cloudflare.com/__up"
+UPLOAD_FALLBACK = "https://httpbin.org/post"
 
 
-# ─────────────────────────────────────────────
-# Routes
-# ─────────────────────────────────────────────
+# ── Configuration ──────────────────────────────────────────────
 
-@app.route("/")
-def index():
-    return render_template("index.html")
+DOWNLOAD_THREADS = 3
+DOWNLOAD_TIMEOUT = 60
+UPLOAD_TIMEOUT = 60
 
-
-@app.route("/api/isp")
-def api_isp():
-    return jsonify(get_isp_info(client_ip=get_client_ip()))
+DOWNLOAD_CHUNK_SIZE = 1024 * 256   # 256KB
+UPLOAD_SIZE = 10 * 1024 * 1024     # 10MB
 
 
-@app.route("/api/ping")
-def api_ping():
-    return jsonify(run_ping_test(count=10))
+# ── Download Worker ────────────────────────────────────────────
 
-
-@app.route("/api/speed")
-def api_speed():
+def _download_once(url, timeout=DOWNLOAD_TIMEOUT):
     """
-    Standalone speed test (non-SSE)
+    Download a file and return bytes downloaded.
     """
-    try:
-        raw = run_speed_test()
+    response = requests.get(url, timeout=timeout, stream=True)
+    response.raise_for_status()
 
-        result = {
-            "success": True,
-            "download_mbps": raw.get("download_mbps") or raw.get("download") or 0,
-            "upload_mbps": raw.get("upload_mbps") or raw.get("upload") or 0,
-            "download_quality": raw.get("download_quality", "Unknown"),
-            "upload_quality": raw.get("upload_quality", "Unknown"),
-            "server": raw.get("server", {
-                "name": "Unknown",
-                "country": "Unknown",
-                "sponsor": "Unknown",
-                "latency": 0
-            })
-        }
+    total_bytes = 0
 
-        return jsonify(result)
+    for chunk in response.iter_content(chunk_size=DOWNLOAD_CHUNK_SIZE):
+        if chunk:
+            total_bytes += len(chunk)
 
-    except Exception as e:
-        return jsonify({
-            "success": False,
-            "error": str(e)
-        })
+    return total_bytes
 
 
-# ─────────────────────────────────────────────
-# MAIN SSE STREAM
-# ─────────────────────────────────────────────
+# ── Download Test ──────────────────────────────────────────────
 
-@app.route("/api/run")
-def api_run():
+def test_download_speed():
+    """
+    Measures download speed using parallel streams.
+    Uses REAL wall-clock timing instead of per-thread timing.
+    """
 
-    client_ip = get_client_ip()
-
-    def generate():
-
-        def send(event, data):
-            return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+    for url in DOWNLOAD_TARGETS:
 
         try:
-            # ── ISP ─────────────────────────────
-            yield send("progress", {"percent": 5, "message": "Fetching ISP..."})
+            print(f"[DEBUG] Attempting download from: {url}")
 
+            # Warm-up connection (not measured)
             try:
-                isp = get_isp_info(client_ip=client_ip)
-                yield send("isp", isp)
-            except Exception as e:
-                yield send("isp", {"success": False, "error": str(e)})
+                requests.get(url, timeout=10, stream=True).close()
+            except Exception:
+                pass
 
-            yield send("progress", {"percent": 15, "message": "ISP done"})
+            results = []
 
-            # ── PING ────────────────────────────
-            yield send("progress", {"percent": 20, "message": "Running ping..."})
+            # REAL wall-clock timing
+            overall_start = time.perf_counter()
 
-            try:
-                ping = run_ping_test(count=10)
-                yield send("ping", ping)
-            except Exception as e:
-                yield send("ping", {"success": False, "error": str(e)})
+            with ThreadPoolExecutor(max_workers=DOWNLOAD_THREADS) as executor:
 
-            yield send("progress", {"percent": 35, "message": "Ping done"})
+                futures = [
+                    executor.submit(_download_once, url)
+                    for _ in range(DOWNLOAD_THREADS)
+                ]
 
-            # ── SPEED (FIXED) ───────────────────
-            yield send("progress", {
-                "percent": 40,
-                "message": "Running speed test..."
-            })
+                for future in as_completed(futures):
+                    try:
+                        bytes_downloaded = future.result()
 
-            try:
-                raw = run_speed_test()
+                        if bytes_downloaded > 0:
+                            results.append(bytes_downloaded)
 
-                speed = {
-                    "success": True,
-                    "download_mbps": float(raw.get("download_mbps") or raw.get("download") or 0),
-                    "upload_mbps": float(raw.get("upload_mbps") or raw.get("upload") or 0),
+                    except Exception as e:
+                        print(f"[DEBUG] Download thread failed: {e}")
 
-                    "download_quality": raw.get("download_quality", "Unknown"),
-                    "upload_quality": raw.get("upload_quality", "Unknown"),
+            overall_end = time.perf_counter()
 
-                    "server": raw.get("server", {
-                        "name": "Unknown",
-                        "country": "Unknown",
-                        "sponsor": "Unknown",
-                        "latency": 0
-                    })
-                }
+            if not results:
+                print("[DEBUG] All download threads failed")
+                continue
 
-                print("[DEBUG SPEED]", speed)
-                yield send("speed", speed)
+            total_duration = overall_end - overall_start
+            total_bytes = sum(results)
 
-            except Exception as e:
-                print("[ERROR SPEED]", str(e))
-                yield send("speed", {
-                    "success": False,
-                    "error": str(e)
-                })
+            if total_duration <= 0:
+                continue
 
-            yield send("progress", {"percent": 70, "message": "Speed done"})
+            speed_bps = (total_bytes * 8) / total_duration
+            speed_mbps = speed_bps / 1_000_000
 
-            # ── STABILITY ───────────────────────
-            yield send("progress", {"percent": 75, "message": "Running stability..."})
+            print(
+                f"[DEBUG] Downloaded {total_bytes} bytes "
+                f"in {total_duration:.2f}s"
+            )
 
-            try:
-                for event in run_stability_test(duration=30, interval=1):
-                    if event["type"] == "ping":
-                        yield send("stability_ping", {
-                            "latency": event["latency"],
-                            "elapsed": event["elapsed"],
-                            "timeout": event["timeout"],
-                        })
-                    elif event["type"] == "result":
-                        yield send("stability", event)
+            print(f"[DEBUG] Download speed: {speed_mbps:.2f} Mbps")
 
-            except Exception as e:
-                yield send("stability", {"success": False, "error": str(e)})
+            return {
+                "success": True,
+                "speed_bps": speed_bps,
+                "speed_mbps": round(speed_mbps, 2),
+                "bytes": total_bytes,
+                "duration": round(total_duration, 2),
+                "threads": len(results),
+            }
 
-            yield send("progress", {"percent": 100, "message": "Done"})
-            yield send("done", {"message": "All tests complete"})
+        except requests.exceptions.Timeout:
+            print(f"[DEBUG] Download timeout from {url}")
+            continue
+
+        except requests.exceptions.ConnectionError as e:
+            print(f"[DEBUG] Download connection error from {url}: {e}")
+            continue
 
         except Exception as e:
-            yield send("error", {"message": str(e)})
-            print(traceback.format_exc())
+            print(f"[DEBUG] Download error from {url}: {e}")
+            continue
 
-    return Response(
-        generate(),
-        mimetype="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
-            "Connection": "keep-alive",
+    return {
+        "success": False,
+        "error": "Download test failed on all endpoints."
+    }
+
+
+# ── Upload Test ────────────────────────────────────────────────
+
+def test_upload_speed():
+    """
+    Measures upload speed using RANDOM DATA
+    to prevent compression/cache optimization.
+    """
+
+    # RANDOM non-compressible payload
+    data = os.urandom(UPLOAD_SIZE)
+
+    targets = [UPLOAD_TARGET, UPLOAD_FALLBACK]
+
+    for url in targets:
+
+        try:
+            print(
+                f"[DEBUG] Starting upload test to {url} "
+                f"({UPLOAD_SIZE} bytes)"
+            )
+
+            start = time.perf_counter()
+
+            response = requests.post(
+                url,
+                data=data,
+                timeout=UPLOAD_TIMEOUT,
+                headers={
+                    "Content-Type": "application/octet-stream",
+                    "Cache-Control": "no-cache",
+                },
+            )
+
+            end = time.perf_counter()
+
+            duration = end - start
+
+            print(
+                f"[DEBUG] Upload response: "
+                f"status={response.status_code}, "
+                f"duration={duration:.2f}s"
+            )
+
+            if duration <= 0:
+                continue
+
+            if response.status_code == 200:
+
+                speed_bps = (UPLOAD_SIZE * 8) / duration
+                speed_mbps = speed_bps / 1_000_000
+
+                print(f"[DEBUG] Upload speed: {speed_mbps:.2f} Mbps")
+
+                return {
+                    "success": True,
+                    "speed_bps": speed_bps,
+                    "speed_mbps": round(speed_mbps, 2),
+                    "bytes": UPLOAD_SIZE,
+                    "duration": round(duration, 2),
+                }
+
+            else:
+                print(
+                    f"[DEBUG] Upload got status "
+                    f"{response.status_code}"
+                )
+
+        except requests.exceptions.Timeout:
+            print(f"[DEBUG] Upload timeout to {url}")
+            continue
+
+        except requests.exceptions.ConnectionError as e:
+            print(f"[DEBUG] Upload connection error to {url}: {e}")
+            continue
+
+        except Exception as e:
+            print(f"[DEBUG] Upload error to {url}: {e}")
+            continue
+
+    return {
+        "success": False,
+        "error": "Upload test failed on all endpoints."
+    }
+
+
+# ── Quality Labels ─────────────────────────────────────────────
+
+def get_quality_label(metric, value):
+
+    thresholds = {
+        "download": [
+            (100, "Excellent"),
+            (25, "Good"),
+            (5, "Average"),
+            (0, "Poor"),
+        ],
+
+        "upload": [
+            (50, "Excellent"),
+            (10, "Good"),
+            (2, "Average"),
+            (0, "Poor"),
+        ],
+    }
+
+    for threshold, label in thresholds[metric]:
+        if value >= threshold:
+            return label
+
+    return "Poor"
+
+
+# ── Main Speed Test ────────────────────────────────────────────
+
+def run_speed_test():
+
+    try:
+
+        print("[DEBUG] Starting speed test suite")
+
+        # ── Download ─────────────────────
+
+        print("[DEBUG] Testing download speed...")
+        download = test_download_speed()
+
+        if not download["success"]:
+            return {
+                "success": False,
+                "error": download.get(
+                    "error",
+                    "Download test failed."
+                )
+            }
+
+        # ── Upload ───────────────────────
+
+        print("[DEBUG] Testing upload speed...")
+        upload = test_upload_speed()
+
+        if not upload["success"]:
+            return {
+                "success": False,
+                "error": upload.get(
+                    "error",
+                    "Upload test failed."
+                )
+            }
+
+        # ── Final Results ────────────────
+
+        download_mbps = download["speed_mbps"]
+        upload_mbps = upload["speed_mbps"]
+
+        result = {
+
+            "success": True,
+
+            "server": {
+                "name": "Cloudflare Speed Test",
+                "country": "Global CDN",
+                "sponsor": "Cloudflare",
+                "latency": 0,
+            },
+
+            "download_bps": download["speed_bps"],
+            "upload_bps": upload["speed_bps"],
+
+            "download_mbps": download_mbps,
+            "upload_mbps": upload_mbps,
+
+            "download_quality": get_quality_label(
+                "download",
+                download_mbps
+            ),
+
+            "upload_quality": get_quality_label(
+                "upload",
+                upload_mbps
+            ),
+
+            "download_bytes": download["bytes"],
+            "upload_bytes": upload["bytes"],
+
+            "download_duration": download["duration"],
+            "upload_duration": upload["duration"],
+
+            "download_threads": download["threads"],
         }
-    )
+
+        print(
+            f"[DEBUG] Speed test complete: "
+            f"{download_mbps} Mbps down, "
+            f"{upload_mbps} Mbps up"
+        )
+
+        return result
+
+    except Exception as e:
+
+        import traceback
+
+        print(f"[ERROR] Speed test crashed: {e}")
+        traceback.print_exc()
+
+        return {
+            "success": False,
+            "error": f"Speed test failed: {e}"
+        }
 
 
-@app.route("/api/health")
-def health():
-    return jsonify({"status": "ok"})
-
+# ── Entry Point ────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))  # Render will override this
 
-    app.run(
-        host="0.0.0.0",
-        port=port,
-        debug=False
-    )
+    result = run_speed_test()
+
+    print("\n==============================")
+    print("        SPEED TEST")
+    print("==============================")
+
+    if result["success"]:
+
+        print(f"Download : {result['download_mbps']} Mbps")
+        print(f"Upload   : {result['upload_mbps']} Mbps")
+
+        print(f"Download Quality : {result['download_quality']}")
+        print(f"Upload Quality   : {result['upload_quality']}")
+
+        print(f"Threads Used     : {result['download_threads']}")
+
+        print(
+            f"Download Duration: "
+            f"{result['download_duration']}s"
+        )
+
+        print(
+            f"Upload Duration  : "
+            f"{result['upload_duration']}s"
+        )
+
+    else:
+        print(f"ERROR: {result['error']}")
