@@ -1,499 +1,212 @@
+import sys
 import os
-import time
-import statistics
-import requests
+import json
+import traceback
+
+from flask import Flask, render_template, Response, jsonify, request
+from flask_cors import CORS
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from render.core.http_ping import run_ping_test
+from render.core.http_speed import run_speed_test
+from render.core.http_stability import run_stability_test
+from render.core.isp_info import get_isp_info
 
 
-# ──────────────────────────────────────────────────────────────
-# ORIGINAL UI-COMPATIBLE ENDPOINTS
-# ──────────────────────────────────────────────────────────────
+app = Flask(
+    __name__,
+    template_folder=os.path.join(os.path.dirname(__file__), "templates"),
+    static_folder=os.path.join(os.path.dirname(__file__), "static"),
+)
 
-DOWNLOAD_TARGETS = [
-    "https://speed.cloudflare.com/__down?bytes=250000000",
-    "https://speed.cloudflare.com/__down?bytes=100000000",
-    "https://proof.ovh.net/files/100Mb.dat",
-]
-
-UPLOAD_TARGET = "https://speed.cloudflare.com/__up"
-UPLOAD_FALLBACK = "https://httpbin.org/post"
+CORS(app)
 
 
-# ──────────────────────────────────────────────────────────────
-# CONFIG
-# ──────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────
+# Client IP helper
+# ─────────────────────────────────────────────
 
-# IMPORTANT:
-# Single-thread testing prevents inflated speed
-DOWNLOAD_THREADS = 1
+def get_client_ip():
+    forwarded_for = request.headers.get("X-Forwarded-For", "")
+    if forwarded_for:
+        return forwarded_for.split(",")[0].strip()
 
-DOWNLOAD_CHUNK_SIZE = 1024 * 256
-UPLOAD_CHUNK_SIZE = 1024 * 256
+    real_ip = request.headers.get("X-Real-IP", "").strip()
+    if real_ip:
+        return real_ip
 
-DOWNLOAD_TIMEOUT = 120
-UPLOAD_TIMEOUT = 120
+    js_ip = request.args.get("client_ip", "").strip()
+    if js_ip:
+        return js_ip
 
-# Sustained measurement duration
-TEST_DURATION = 20
-
-# Random upload payload
-UPLOAD_SIZE = 25 * 1024 * 1024
+    return request.remote_addr
 
 
-# ──────────────────────────────────────────────────────────────
-# DOWNLOAD TEST
-# ──────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────
+# Routes
+# ─────────────────────────────────────────────
 
-def test_download_speed():
+@app.route("/")
+def index():
+    return render_template("index.html")
 
+
+@app.route("/api/isp")
+def api_isp():
+    return jsonify(get_isp_info(client_ip=get_client_ip()))
+
+
+@app.route("/api/ping")
+def api_ping():
+    return jsonify(run_ping_test(count=10))
+
+
+@app.route("/api/speed")
+def api_speed():
     """
-    Realistic sustained download test.
-    Keeps original endpoints for UI compatibility.
+    Standalone speed test (non-SSE)
     """
-
-    for url in DOWNLOAD_TARGETS:
-
-        try:
-
-            print(f"[DEBUG] Download test using: {url}")
-
-            response = requests.get(
-                url,
-                stream=True,
-                timeout=DOWNLOAD_TIMEOUT,
-                headers={
-                    "Cache-Control": "no-cache",
-                    "Pragma": "no-cache",
-                }
-            )
-
-            response.raise_for_status()
-
-            total_bytes = 0
-            speed_samples = []
-
-            start_time = time.perf_counter()
-
-            last_sample_time = start_time
-            last_sample_bytes = 0
-
-            for chunk in response.iter_content(
-                chunk_size=DOWNLOAD_CHUNK_SIZE
-            ):
-
-                if not chunk:
-                    continue
-
-                total_bytes += len(chunk)
-
-                now = time.perf_counter()
-
-                elapsed_since_sample = (
-                    now - last_sample_time
-                )
-
-                # Sample every second
-                if elapsed_since_sample >= 1:
-
-                    bytes_since_sample = (
-                        total_bytes - last_sample_bytes
-                    )
-
-                    sample_bps = (
-                        bytes_since_sample * 8
-                    ) / elapsed_since_sample
-
-                    speed_samples.append(sample_bps)
-
-                    print(
-                        f"[DEBUG] Current Download: "
-                        f"{sample_bps / 1_000_000:.2f} Mbps"
-                    )
-
-                    last_sample_time = now
-                    last_sample_bytes = total_bytes
-
-                # Sustained testing
-                total_elapsed = now - start_time
-
-                if total_elapsed >= TEST_DURATION:
-                    break
-
-            if not speed_samples:
-                continue
-
-            # Remove startup burst spikes
-            if len(speed_samples) > 4:
-                speed_samples = speed_samples[2:]
-
-            avg_bps = statistics.mean(speed_samples)
-
-            avg_mbps = avg_bps / 1_000_000
-
-            duration = round(
-                time.perf_counter() - start_time,
-                2
-            )
-
-            print(
-                f"[DEBUG] Sustained Download Speed: "
-                f"{avg_mbps:.2f} Mbps"
-            )
-
-            return {
-                "success": True,
-                "speed_bps": avg_bps,
-                "speed_mbps": round(avg_mbps, 2),
-                "bytes": total_bytes,
-                "duration": duration,
-                "threads": DOWNLOAD_THREADS,
-                "samples": len(speed_samples),
-            }
-
-        except requests.exceptions.Timeout:
-            print(f"[DEBUG] Download timeout from {url}")
-
-        except Exception as e:
-            print(f"[DEBUG] Download error from {url}: {e}")
-
-    return {
-        "success": False,
-        "error": "Download test failed."
-    }
-
-
-# ──────────────────────────────────────────────────────────────
-# UPLOAD TEST
-# ──────────────────────────────────────────────────────────────
-
-def test_upload_speed():
-
-    """
-    Realistic upload speed test.
-    Uses random payload to avoid compression inflation.
-    """
-
-    # RANDOM payload prevents fake upload acceleration
-    data = os.urandom(UPLOAD_SIZE)
-
-    targets = [UPLOAD_TARGET, UPLOAD_FALLBACK]
-
-    for url in targets:
-
-        try:
-
-            print(f"[DEBUG] Upload test using: {url}")
-
-            start_time = time.perf_counter()
-
-            response = requests.post(
-                url,
-                data=data,
-                timeout=UPLOAD_TIMEOUT,
-                headers={
-                    "Content-Type": "application/octet-stream",
-                    "Cache-Control": "no-cache",
-                    "Pragma": "no-cache",
-                }
-            )
-
-            end_time = time.perf_counter()
-
-            response.raise_for_status()
-
-            duration = end_time - start_time
-
-            if duration <= 0:
-                continue
-
-            speed_bps = (
-                UPLOAD_SIZE * 8
-            ) / duration
-
-            speed_mbps = speed_bps / 1_000_000
-
-            print(
-                f"[DEBUG] Sustained Upload Speed: "
-                f"{speed_mbps:.2f} Mbps"
-            )
-
-            return {
-                "success": True,
-                "speed_bps": speed_bps,
-                "speed_mbps": round(speed_mbps, 2),
-                "bytes": UPLOAD_SIZE,
-                "duration": round(duration, 2),
-            }
-
-        except requests.exceptions.Timeout:
-            print(f"[DEBUG] Upload timeout to {url}")
-
-        except Exception as e:
-            print(f"[DEBUG] Upload error to {url}: {e}")
-
-    return {
-        "success": False,
-        "error": "Upload test failed."
-    }
-
-
-# ──────────────────────────────────────────────────────────────
-# LATENCY TEST
-# ──────────────────────────────────────────────────────────────
-
-def test_latency():
-
-    host = "https://1.1.1.1"
-
-    latencies = []
-
-    for i in range(5):
-
-        try:
-
-            start = time.perf_counter()
-
-            response = requests.get(
-                host,
-                timeout=10
-            )
-
-            end = time.perf_counter()
-
-            response.raise_for_status()
-
-            latency_ms = (
-                end - start
-            ) * 1000
-
-            latencies.append(latency_ms)
-
-            print(
-                f"[DEBUG] Ping {i+1}: "
-                f"{latency_ms:.2f} ms"
-            )
-
-        except Exception as e:
-            print(f"[DEBUG] Ping failed: {e}")
-
-    if not latencies:
-
-        return {
-            "success": False,
-            "error": "Latency test failed."
-        }
-
-    return {
-        "success": True,
-        "avg_latency": round(
-            statistics.mean(latencies),
-            2
-        ),
-        "min_latency": round(
-            min(latencies),
-            2
-        ),
-        "max_latency": round(
-            max(latencies),
-            2
-        ),
-        "jitter": round(
-            statistics.stdev(latencies),
-            2
-        ) if len(latencies) > 1 else 0,
-    }
-
-
-# ──────────────────────────────────────────────────────────────
-# QUALITY LABELS
-# ──────────────────────────────────────────────────────────────
-
-def get_quality_label(metric, value):
-
-    thresholds = {
-
-        "download": [
-            (100, "Excellent"),
-            (50, "Good"),
-            (10, "Average"),
-            (0, "Poor"),
-        ],
-
-        "upload": [
-            (50, "Excellent"),
-            (20, "Good"),
-            (5, "Average"),
-            (0, "Poor"),
-        ],
-    }
-
-    for threshold, label in thresholds[metric]:
-
-        if value >= threshold:
-            return label
-
-    return "Poor"
-
-
-# ──────────────────────────────────────────────────────────────
-# MAIN
-# ──────────────────────────────────────────────────────────────
-
-def run_speed_test():
-
     try:
+        raw = run_speed_test()
 
-        print("\n[DEBUG] Starting realistic speed test...\n")
-
-        # DOWNLOAD
-        print("[DEBUG] Testing sustained download...")
-        download = test_download_speed()
-
-        if not download["success"]:
-            return download
-
-        # UPLOAD
-        print("\n[DEBUG] Testing sustained upload...")
-        upload = test_upload_speed()
-
-        if not upload["success"]:
-            return upload
-
-        # LATENCY
-        print("\n[DEBUG] Testing latency...")
-        latency = test_latency()
-
-        if not latency["success"]:
-
-            latency = {
-                "avg_latency": 0,
-                "min_latency": 0,
-                "max_latency": 0,
-                "jitter": 0,
-            }
-
-        # FINAL UI-COMPATIBLE RESULT
         result = {
-
             "success": True,
-
-            # UI REQUIRED STRUCTURE
-            "server": {
-                "name": "Cloudflare Speed Test",
-                "country": "Global CDN",
-                "sponsor": "Cloudflare",
-                "latency": latency["avg_latency"],
-            },
-
-            # UI REQUIRED FIELDS
-            "download_bps": download["speed_bps"],
-            "upload_bps": upload["speed_bps"],
-
-            "download_mbps": download["speed_mbps"],
-            "upload_mbps": upload["speed_mbps"],
-
-            "download_quality": get_quality_label(
-                "download",
-                download["speed_mbps"]
-            ),
-
-            "upload_quality": get_quality_label(
-                "upload",
-                upload["speed_mbps"]
-            ),
-
-            "download_bytes": download["bytes"],
-            "upload_bytes": upload["bytes"],
-
-            "download_duration": download["duration"],
-            "upload_duration": upload["duration"],
-
-            "download_threads": DOWNLOAD_THREADS,
-
-            # EXTRA PING DATA
-            "ping": {
-                "avg": latency["avg_latency"],
-                "min": latency["min_latency"],
-                "max": latency["max_latency"],
-                "jitter": latency["jitter"],
-                "quality": (
-                    "Excellent"
-                    if latency["avg_latency"] <= 20
-                    else "Good"
-                    if latency["avg_latency"] <= 50
-                    else "Average"
-                    if latency["avg_latency"] <= 100
-                    else "Poor"
-                )
-            }
+            "download_mbps": raw.get("download_mbps") or raw.get("download") or 0,
+            "upload_mbps": raw.get("upload_mbps") or raw.get("upload") or 0,
+            "download_quality": raw.get("download_quality", "Unknown"),
+            "upload_quality": raw.get("upload_quality", "Unknown"),
+            "server": raw.get("server", {
+                "name": "Unknown",
+                "country": "Unknown",
+                "sponsor": "Unknown",
+                "latency": 0
+            })
         }
 
-        print(
-            f"\n[DEBUG] Final Speed Results:"
-        )
-
-        print(
-            f"[DEBUG] Download: "
-            f"{result['download_mbps']} Mbps"
-        )
-
-        print(
-            f"[DEBUG] Upload: "
-            f"{result['upload_mbps']} Mbps"
-        )
-
-        print(
-            f"[DEBUG] Latency: "
-            f"{latency['avg_latency']} ms"
-        )
-
-        return result
+        return jsonify(result)
 
     except Exception as e:
-
-        import traceback
-
-        traceback.print_exc()
-
-        return {
+        return jsonify({
             "success": False,
             "error": str(e)
+        })
+
+
+# ─────────────────────────────────────────────
+# MAIN SSE STREAM
+# ─────────────────────────────────────────────
+
+@app.route("/api/run")
+def api_run():
+
+    client_ip = get_client_ip()
+
+    def generate():
+
+        def send(event, data):
+            return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+        try:
+            # ── ISP ─────────────────────────────
+            yield send("progress", {"percent": 5, "message": "Fetching ISP..."})
+
+            try:
+                isp = get_isp_info(client_ip=client_ip)
+                yield send("isp", isp)
+            except Exception as e:
+                yield send("isp", {"success": False, "error": str(e)})
+
+            yield send("progress", {"percent": 15, "message": "ISP done"})
+
+            # ── PING ────────────────────────────
+            yield send("progress", {"percent": 20, "message": "Running ping..."})
+
+            try:
+                ping = run_ping_test(count=10)
+                yield send("ping", ping)
+            except Exception as e:
+                yield send("ping", {"success": False, "error": str(e)})
+
+            yield send("progress", {"percent": 35, "message": "Ping done"})
+
+            # ── SPEED (FIXED) ───────────────────
+            yield send("progress", {
+                "percent": 40,
+                "message": "Running speed test..."
+            })
+
+            try:
+                raw = run_speed_test()
+
+                speed = {
+                    "success": True,
+                    "download_mbps": float(raw.get("download_mbps") or raw.get("download") or 0),
+                    "upload_mbps": float(raw.get("upload_mbps") or raw.get("upload") or 0),
+
+                    "download_quality": raw.get("download_quality", "Unknown"),
+                    "upload_quality": raw.get("upload_quality", "Unknown"),
+
+                    "server": raw.get("server", {
+                        "name": "Unknown",
+                        "country": "Unknown",
+                        "sponsor": "Unknown",
+                        "latency": 0
+                    })
+                }
+
+                print("[DEBUG SPEED]", speed)
+                yield send("speed", speed)
+
+            except Exception as e:
+                print("[ERROR SPEED]", str(e))
+                yield send("speed", {
+                    "success": False,
+                    "error": str(e)
+                })
+
+            yield send("progress", {"percent": 70, "message": "Speed done"})
+
+            # ── STABILITY ───────────────────────
+            yield send("progress", {"percent": 75, "message": "Running stability..."})
+
+            try:
+                for event in run_stability_test(duration=30, interval=1):
+                    if event["type"] == "ping":
+                        yield send("stability_ping", {
+                            "latency": event["latency"],
+                            "elapsed": event["elapsed"],
+                            "timeout": event["timeout"],
+                        })
+                    elif event["type"] == "result":
+                        yield send("stability", event)
+
+            except Exception as e:
+                yield send("stability", {"success": False, "error": str(e)})
+
+            yield send("progress", {"percent": 100, "message": "Done"})
+            yield send("done", {"message": "All tests complete"})
+
+        except Exception as e:
+            yield send("error", {"message": str(e)})
+            print(traceback.format_exc())
+
+    return Response(
+        generate(),
+        mimetype="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
         }
+    )
 
 
-# ──────────────────────────────────────────────────────────────
-# ENTRY POINT
-# ──────────────────────────────────────────────────────────────
+@app.route("/api/health")
+def health():
+    return jsonify({"status": "ok"})
+
 
 if __name__ == "__main__":
-
-    result = run_speed_test()
-
-    print("\n====================================")
-    print("     REALISTIC SPEED TEST")
-    print("====================================")
-
-    if result["success"]:
-
-        print(
-            f"Download Speed : "
-            f"{result['download_mbps']} Mbps"
-        )
-
-        print(
-            f"Upload Speed   : "
-            f"{result['upload_mbps']} Mbps"
-        )
-
-        print(
-            f"Latency        : "
-            f"{result['ping']['avg']} ms"
-        )
-
-        print(
-            f"Jitter         : "
-            f"{result['ping']['jitter']} ms"
-        )
-
-    else:
-
-        print(f"ERROR: {result['error']}")
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, debug=False)
