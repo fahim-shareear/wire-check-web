@@ -4,7 +4,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import json
 import traceback
-from flask import Flask, render_template, Response, jsonify
+from flask import Flask, render_template, Response, jsonify, request
 from flask_cors import CORS
 
 from render.core.http_ping import run_ping_test
@@ -20,6 +20,37 @@ app = Flask(
 CORS(app)
 
 
+# ── Helper ─────────────────────────────────────────────────────
+
+def get_client_ip():
+    """
+    Extract the real client IP from request headers.
+    Render (and most proxies) set X-Forwarded-For.
+    Falls back to JS-detected IP passed as query param,
+    then to remote_addr.
+    """
+    forwarded_for = request.headers.get("X-Forwarded-For", "")
+    if forwarded_for:
+        ip = forwarded_for.split(",")[0].strip()
+        if ip:
+            print(f"[DEBUG] Client IP from X-Forwarded-For: {ip}")
+            return ip
+
+    real_ip = request.headers.get("X-Real-IP", "").strip()
+    if real_ip:
+        print(f"[DEBUG] Client IP from X-Real-IP: {real_ip}")
+        return real_ip
+
+    js_ip = request.args.get("client_ip", "").strip()
+    if js_ip:
+        print(f"[DEBUG] Client IP from JS query param: {js_ip}")
+        return js_ip
+
+    fallback = request.remote_addr
+    print(f"[DEBUG] Client IP fallback to remote_addr: {fallback}")
+    return fallback
+
+
 # ── Routes ─────────────────────────────────────────────────────
 
 @app.route("/")
@@ -29,7 +60,8 @@ def index():
 
 @app.route("/api/isp")
 def api_isp():
-    result = get_isp_info()
+    client_ip = get_client_ip()
+    result = get_isp_info(client_ip=client_ip)
     return jsonify(result)
 
 
@@ -51,6 +83,9 @@ def api_run():
     Main SSE endpoint — runs all tests and streams
     live progress events to the browser with error handling.
     """
+    client_ip = get_client_ip()
+    print(f"[DEBUG] Starting test run for client IP: {client_ip}")
+
     def generate():
         def send(event, data):
             return f"event: {event}\ndata: {json.dumps(data)}\n\n"
@@ -63,14 +98,14 @@ def api_run():
             })
 
             try:
-                isp = get_isp_info()
+                isp = get_isp_info(client_ip=client_ip)
                 yield send("isp", isp)
             except Exception as e:
                 print(f"[ERROR] ISP fetch failed: {str(e)}")
                 print(traceback.format_exc())
                 yield send("isp", {
                     "success": False,
-                    "error": f"ISP info failed: {str(e)}"
+                    "error":   f"ISP info failed: {str(e)}"
                 })
 
             yield send("progress", {
@@ -92,7 +127,7 @@ def api_run():
                 print(traceback.format_exc())
                 yield send("ping", {
                     "success": False,
-                    "error": f"Ping test failed: {str(e)}"
+                    "error":   f"Ping test failed: {str(e)}"
                 })
 
             yield send("progress", {
@@ -114,7 +149,7 @@ def api_run():
                 print(traceback.format_exc())
                 yield send("speed", {
                     "success": False,
-                    "error": f"Speed test failed: {str(e)}"
+                    "error":   f"Speed test failed: {str(e)}"
                 })
 
             yield send("progress", {
@@ -128,7 +163,6 @@ def api_run():
                 "message": "Running stability test (30 seconds)..."
             })
 
-            stability_result = None
             try:
                 for event in run_stability_test(duration=30, interval=1):
                     if event["type"] == "ping":
@@ -138,15 +172,14 @@ def api_run():
                             "timeout": event["timeout"],
                         })
                     elif event["type"] == "result":
-                        stability_result = event
-                        yield send("stability", stability_result)
+                        yield send("stability", event)
 
             except Exception as e:
                 print(f"[ERROR] Stability test failed: {str(e)}")
                 print(traceback.format_exc())
                 yield send("stability", {
                     "success": False,
-                    "error": f"Stability test failed: {str(e)}"
+                    "error":   f"Stability test failed: {str(e)}"
                 })
 
             yield send("progress", {
@@ -166,9 +199,9 @@ def api_run():
         generate(),
         mimetype="text/event-stream",
         headers={
-            "Cache-Control": "no-cache",
+            "Cache-Control":    "no-cache",
             "X-Accel-Buffering": "no",
-            "Connection": "keep-alive",
+            "Connection":       "keep-alive",
         }
     )
 

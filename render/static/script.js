@@ -1,21 +1,67 @@
 // ── State ──────────────────────────────────────────────────────
-var eventSource = null;
+var eventSource    = null;
 var testInProgress = false;
+var clientIP       = null;
+
+// ── Detect Client IP ───────────────────────────────────────────
+
+async function getClientIP() {
+    const services = [
+        "https://api.ipify.org?format=json",
+        "https://ipapi.co/json/",
+        "https://json.geoip.rs/"
+    ];
+
+    for (const url of services) {
+        try {
+            const response = await fetch(url, { signal: AbortSignal.timeout(5000) });
+            if (response.ok) {
+                const data = await response.json();
+                const ip   = data.ip || data.IP || data.query;
+                if (ip) {
+                    console.log("[DEBUG] Detected client IP:", ip);
+                    return ip;
+                }
+            }
+        } catch (err) {
+            console.log(`[DEBUG] Failed to get IP from ${url}:`, err.message);
+        }
+    }
+
+    console.warn("[WARNING] Could not detect client IP from any service");
+    return null;
+}
 
 // ── Main Functions ─────────────────────────────────────────────
 
-function startTest() {
+async function startTest() {
     if (testInProgress) {
         alert("Test already in progress!");
         return;
     }
 
     resetUI();
-    setStatus("Initializing tests...", "running");
+    setStatus("Detecting your real IP address...", "running");
     setButtons(true);
     testInProgress = true;
 
-    eventSource = new EventSource("/api/run");
+    // Detect client IP before starting
+    clientIP = await getClientIP();
+
+    if (clientIP) {
+        setStatus("Starting tests for " + clientIP + "...", "running");
+    } else {
+        setStatus("Starting tests (IP detection failed, using server fallback)...", "running");
+    }
+
+    // Always pass client_ip as query param — server will prefer X-Forwarded-For
+    // but this acts as a reliable fallback when the proxy header is unavailable
+    let apiUrl = "/api/run";
+    if (clientIP) {
+        apiUrl += "?client_ip=" + encodeURIComponent(clientIP);
+    }
+
+    eventSource = new EventSource(apiUrl);
 
     eventSource.addEventListener("progress", function(e) {
         try {
@@ -31,6 +77,7 @@ function startTest() {
         try {
             var data = JSON.parse(e.data);
             if (data.success) {
+                console.log("[DEBUG] ISP data received:", data);
                 updateISP(data);
                 setStage("isp", "done");
             } else {
@@ -150,48 +197,52 @@ function stopTest() {
 function updateISP(result) {
     if (!result.success) return;
     var d = result.data;
-    setText("isp-ip",       d.ip || "N/A");
-    setText("isp-org",      d.isp || "N/A");
-    setText("isp-city",     d.city || "N/A");
-    setText("isp-country",  (d.country || "N/A") + " — " + (d.region || "N/A"));
-    setText("isp-timezone", d.timezone || "N/A");
-    setText("sum-isp",      d.isp || "N/A");
+    setText("isp-ip",       d.ip        || "N/A");
+    setText("isp-org",      d.isp       || "N/A");
+    setText("isp-city",     d.city      || "N/A");
+    setText("isp-country",  (d.country  || "N/A") + " — " + (d.region || "N/A"));
+    setText("isp-timezone", d.timezone  || "N/A");
+    setText("sum-isp",      d.isp       || "N/A");
+
+    if (d.note) {
+        console.log("[INFO]", d.note);
+    }
 }
 
 function updatePing(result) {
     if (!result.success) return;
-    setText("ping-avg",             String(result.avg_latency) + " ms" || "—");
-    setText("ping-min",             (result.min_latency || "—") + " ms");
-    setText("ping-max",             (result.max_latency || "—") + " ms");
-    setText("ping-jitter",          (result.jitter || "—") + " ms");
-    setText("ping-loss",            (result.packet_loss || "—") + "%");
-    setQuality("ping-quality",          result.ping_quality || "Unknown");
-    setQuality("ping-jitter-quality",   result.jitter_quality || "Unknown");
+    setText("ping-avg",           result.avg_latency + " ms");
+    setText("ping-min",           (result.min_latency  || "—") + " ms");
+    setText("ping-max",           (result.max_latency  || "—") + " ms");
+    setText("ping-jitter",        (result.jitter       || "—") + " ms");
+    setText("ping-loss",          (result.packet_loss  || "—") + "%");
+    setQuality("ping-quality",        result.ping_quality   || "Unknown");
+    setQuality("ping-jitter-quality", result.jitter_quality || "Unknown");
     setText("sum-ping", result.avg_latency + " ms — " + (result.ping_quality || "Unknown"));
 }
 
 function updateSpeed(result) {
     if (!result.success) return;
     setText("dl-value",      String(result.download_mbps) || "—");
-    setText("ul-value",      String(result.upload_mbps) || "—");
+    setText("ul-value",      String(result.upload_mbps)   || "—");
     setQuality("dl-quality", result.download_quality || "Unknown");
-    setQuality("ul-quality", result.upload_quality || "Unknown");
+    setQuality("ul-quality", result.upload_quality   || "Unknown");
     setBar("dl-bar", Math.min(result.download_mbps || 0, 100));
-    setBar("ul-bar", Math.min(result.upload_mbps || 0, 100));
-    setText("speed-server",  (result.server.name || "Unknown") + ", " + (result.server.country || "Unknown"));
-    setText("speed-sponsor", result.server.sponsor || "Unknown");
+    setBar("ul-bar", Math.min(result.upload_mbps   || 0, 100));
+    setText("speed-server",  (result.server.name    || "Unknown") + ", " + (result.server.country || "Unknown"));
+    setText("speed-sponsor", result.server.sponsor  || "Unknown");
     setText("speed-latency", (result.server.latency || 0) + " ms");
     setText("sum-download",  result.download_mbps + " Mbps — " + (result.download_quality || "Unknown"));
-    setText("sum-upload",    result.upload_mbps + " Mbps — " + (result.upload_quality || "Unknown"));
+    setText("sum-upload",    result.upload_mbps    + " Mbps — " + (result.upload_quality   || "Unknown"));
 }
 
 function updateStability(result) {
     if (!result.success) return;
     setText("stab-score",  String(result.stability_score) || "—");
     setBar("stab-bar",     result.stability_score || 0);
-    setText("stab-avg",    (result.avg_latency || "—") + " ms");
-    setText("stab-jitter", (result.jitter || "—") + " ms");
-    setText("stab-loss",   (result.packet_loss || "—") + "%");
+    setText("stab-avg",    (result.avg_latency  || "—") + " ms");
+    setText("stab-jitter", (result.jitter       || "—") + " ms");
+    setText("stab-loss",   (result.packet_loss  || "—") + "%");
     setText("stab-range",  (result.latency_range || "—") + " ms");
     setText("stab-type",   result.connection_type || "Unknown");
     setQuality("stab-label", result.stability_label || "Unknown");
@@ -203,9 +254,7 @@ function appendPingLog(data) {
     if (!log) return;
 
     var placeholder = log.querySelector(".log-placeholder");
-    if (placeholder) {
-        placeholder.remove();
-    }
+    if (placeholder) placeholder.remove();
 
     var line = document.createElement("span");
     line.classList.add("log-line");
@@ -215,22 +264,16 @@ function appendPingLog(data) {
         line.textContent = "[" + data.elapsed + "s] Timeout";
     } else {
         var ms = data.latency;
-        if (ms < 40) {
-            line.classList.add("fast");
-        } else if (ms < 80) {
-            line.classList.add("medium");
-        } else {
-            line.classList.add("slow");
-        }
+        if      (ms < 40) line.classList.add("fast");
+        else if (ms < 80) line.classList.add("medium");
+        else              line.classList.add("slow");
         line.textContent = "[" + data.elapsed + "s] " + ms.toFixed(2) + " ms";
     }
 
     log.appendChild(line);
 
     var lines = log.querySelectorAll(".log-line");
-    if (lines.length > 10) {
-        lines[0].remove();
-    }
+    if (lines.length > 10) lines[0].remove();
 
     log.scrollTop = log.scrollHeight;
 }
@@ -239,46 +282,38 @@ function appendPingLog(data) {
 
 function setText(id, value) {
     var el = document.getElementById(id);
-    if (el) {
-        el.textContent = value;
-    }
+    if (el) el.textContent = value;
 }
 
 function setBar(id, percent) {
     var el = document.getElementById(id);
-    if (el) {
-        el.style.width = Math.max(0, Math.min(100, percent)) + "%";
-    }
+    if (el) el.style.width = Math.max(0, Math.min(100, percent)) + "%";
 }
 
 function setQuality(id, quality) {
     var el = document.getElementById(id);
     if (!el) return;
     el.textContent = quality;
-    el.className = "metric-value quality-" + (quality || "unknown").toLowerCase();
+    el.className   = "metric-value quality-" + (quality || "unknown").toLowerCase();
 }
 
 function setProgress(percent) {
     var el = document.getElementById("progress-fill");
-    if (el) {
-        el.style.width = Math.max(0, Math.min(100, percent)) + "%";
-    }
+    if (el) el.style.width = Math.max(0, Math.min(100, percent)) + "%";
 }
 
 function setStatus(message, state) {
     var el = document.getElementById("status-text");
     if (!el) return;
     el.textContent = message;
-    el.className = "status-text " + (state || "idle");
+    el.className   = "status-text " + (state || "idle");
 }
 
 function setStage(name, state) {
     var stage = document.getElementById("stage-" + name);
     if (!stage) return;
     var dot = stage.querySelector(".dot");
-    if (dot) {
-        dot.className = "dot " + state;
-    }
+    if (dot) dot.className = "dot " + state;
 }
 
 function setButtons(isRunning) {
@@ -301,12 +336,10 @@ function resetUI() {
         "sum-upload", "sum-stability"
     ];
 
-    for (var i = 0; i < ids.length; i++) {
-        setText(ids[i], "—");
-    }
+    for (var i = 0; i < ids.length; i++) setText(ids[i], "—");
 
-    setBar("dl-bar", 0);
-    setBar("ul-bar", 0);
+    setBar("dl-bar",   0);
+    setBar("ul-bar",   0);
     setBar("stab-bar", 0);
     setProgress(0);
 
@@ -315,8 +348,7 @@ function resetUI() {
         log.innerHTML = '<span class="log-placeholder">Waiting for stability test...</span>';
     }
 
-    var stages = ["isp", "ping", "speed", "stability"];
-    for (var j = 0; j < stages.length; j++) {
-        setStage(stages[j], "idle");
-    }
+    ["isp", "ping", "speed", "stability"].forEach(function(s) {
+        setStage(s, "idle");
+    });
 }
