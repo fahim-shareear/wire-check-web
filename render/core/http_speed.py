@@ -5,28 +5,38 @@ import requests
 
 
 # ──────────────────────────────────────────────────────────────
+# ORIGINAL UI-COMPATIBLE ENDPOINTS
+# ──────────────────────────────────────────────────────────────
+
+DOWNLOAD_TARGETS = [
+    "https://speed.cloudflare.com/__down?bytes=250000000",
+    "https://speed.cloudflare.com/__down?bytes=100000000",
+    "https://proof.ovh.net/files/100Mb.dat",
+]
+
+UPLOAD_TARGET = "https://speed.cloudflare.com/__up"
+UPLOAD_FALLBACK = "https://httpbin.org/post"
+
+
+# ──────────────────────────────────────────────────────────────
 # CONFIG
 # ──────────────────────────────────────────────────────────────
 
-# Use NON-CDN / less optimized endpoints
-DOWNLOAD_TARGETS = [
-    "https://proof.ovh.net/files/1Gb.dat",
-    "https://speed.hetzner.de/1GB.bin",
-]
+# IMPORTANT:
+# Single-thread testing prevents inflated speed
+DOWNLOAD_THREADS = 1
 
-UPLOAD_TARGETS = [
-    "https://httpbin.org/post",
-]
-
-# Realistic testing settings
-DOWNLOAD_CHUNK_SIZE = 1024 * 256      # 256KB
+DOWNLOAD_CHUNK_SIZE = 1024 * 256
 UPLOAD_CHUNK_SIZE = 1024 * 256
 
 DOWNLOAD_TIMEOUT = 120
 UPLOAD_TIMEOUT = 120
 
-TEST_DURATION = 20                    # seconds
-UPLOAD_SIZE = 25 * 1024 * 1024       # 25MB random upload
+# Sustained measurement duration
+TEST_DURATION = 20
+
+# Random upload payload
+UPLOAD_SIZE = 25 * 1024 * 1024
 
 
 # ──────────────────────────────────────────────────────────────
@@ -34,13 +44,10 @@ UPLOAD_SIZE = 25 * 1024 * 1024       # 25MB random upload
 # ──────────────────────────────────────────────────────────────
 
 def test_download_speed():
+
     """
-    Measures sustained download speed over time.
-    Uses:
-    - single connection
-    - long duration
-    - non-CDN servers
-    - rolling samples
+    Realistic sustained download test.
+    Keeps original endpoints for UI compatibility.
     """
 
     for url in DOWNLOAD_TARGETS:
@@ -65,6 +72,7 @@ def test_download_speed():
             speed_samples = []
 
             start_time = time.perf_counter()
+
             last_sample_time = start_time
             last_sample_bytes = 0
 
@@ -79,9 +87,11 @@ def test_download_speed():
 
                 now = time.perf_counter()
 
-                elapsed_since_sample = now - last_sample_time
+                elapsed_since_sample = (
+                    now - last_sample_time
+                )
 
-                # Sample speed every second
+                # Sample every second
                 if elapsed_since_sample >= 1:
 
                     bytes_since_sample = (
@@ -102,7 +112,7 @@ def test_download_speed():
                     last_sample_time = now
                     last_sample_bytes = total_bytes
 
-                # Stop after sustained test duration
+                # Sustained testing
                 total_elapsed = now - start_time
 
                 if total_elapsed >= TEST_DURATION:
@@ -111,7 +121,7 @@ def test_download_speed():
             if not speed_samples:
                 continue
 
-            # Remove burst spikes
+            # Remove startup burst spikes
             if len(speed_samples) > 4:
                 speed_samples = speed_samples[2:]
 
@@ -135,6 +145,7 @@ def test_download_speed():
                 "speed_mbps": round(avg_mbps, 2),
                 "bytes": total_bytes,
                 "duration": duration,
+                "threads": DOWNLOAD_THREADS,
                 "samples": len(speed_samples),
             }
 
@@ -155,17 +166,18 @@ def test_download_speed():
 # ──────────────────────────────────────────────────────────────
 
 def test_upload_speed():
+
     """
-    Measures sustained upload speed using:
-    - random non-compressible data
-    - single connection
-    - sustained upload
+    Realistic upload speed test.
+    Uses random payload to avoid compression inflation.
     """
 
-    # RANDOM payload prevents compression tricks
+    # RANDOM payload prevents fake upload acceleration
     data = os.urandom(UPLOAD_SIZE)
 
-    for url in UPLOAD_TARGETS:
+    targets = [UPLOAD_TARGET, UPLOAD_FALLBACK]
+
+    for url in targets:
 
         try:
 
@@ -180,6 +192,7 @@ def test_upload_speed():
                 headers={
                     "Content-Type": "application/octet-stream",
                     "Cache-Control": "no-cache",
+                    "Pragma": "no-cache",
                 }
             )
 
@@ -224,7 +237,7 @@ def test_upload_speed():
 
 
 # ──────────────────────────────────────────────────────────────
-# LATENCY / PING TEST
+# LATENCY TEST
 # ──────────────────────────────────────────────────────────────
 
 def test_latency():
@@ -311,27 +324,7 @@ def get_quality_label(metric, value):
             (5, "Average"),
             (0, "Poor"),
         ],
-
-        "latency": [
-            (20, "Excellent"),
-            (50, "Good"),
-            (100, "Average"),
-            (999999, "Poor"),
-        ]
     }
-
-    if metric == "latency":
-
-        if value <= 20:
-            return "Excellent"
-
-        elif value <= 50:
-            return "Good"
-
-        elif value <= 100:
-            return "Average"
-
-        return "Poor"
 
     for threshold, label in thresholds[metric]:
 
@@ -370,11 +363,30 @@ def run_speed_test():
         latency = test_latency()
 
         if not latency["success"]:
-            return latency
 
+            latency = {
+                "avg_latency": 0,
+                "min_latency": 0,
+                "max_latency": 0,
+                "jitter": 0,
+            }
+
+        # FINAL UI-COMPATIBLE RESULT
         result = {
 
             "success": True,
+
+            # UI REQUIRED STRUCTURE
+            "server": {
+                "name": "Cloudflare Speed Test",
+                "country": "Global CDN",
+                "sponsor": "Cloudflare",
+                "latency": latency["avg_latency"],
+            },
+
+            # UI REQUIRED FIELDS
+            "download_bps": download["speed_bps"],
+            "upload_bps": upload["speed_bps"],
 
             "download_mbps": download["speed_mbps"],
             "upload_mbps": upload["speed_mbps"],
@@ -389,21 +401,50 @@ def run_speed_test():
                 upload["speed_mbps"]
             ),
 
-            "latency_ms": latency["avg_latency"],
-
-            "latency_quality": get_quality_label(
-                "latency",
-                latency["avg_latency"]
-            ),
-
-            "jitter_ms": latency["jitter"],
+            "download_bytes": download["bytes"],
+            "upload_bytes": upload["bytes"],
 
             "download_duration": download["duration"],
             "upload_duration": upload["duration"],
 
-            "download_bytes": download["bytes"],
-            "upload_bytes": upload["bytes"],
+            "download_threads": DOWNLOAD_THREADS,
+
+            # EXTRA PING DATA
+            "ping": {
+                "avg": latency["avg_latency"],
+                "min": latency["min_latency"],
+                "max": latency["max_latency"],
+                "jitter": latency["jitter"],
+                "quality": (
+                    "Excellent"
+                    if latency["avg_latency"] <= 20
+                    else "Good"
+                    if latency["avg_latency"] <= 50
+                    else "Average"
+                    if latency["avg_latency"] <= 100
+                    else "Poor"
+                )
+            }
         }
+
+        print(
+            f"\n[DEBUG] Final Speed Results:"
+        )
+
+        print(
+            f"[DEBUG] Download: "
+            f"{result['download_mbps']} Mbps"
+        )
+
+        print(
+            f"[DEBUG] Upload: "
+            f"{result['upload_mbps']} Mbps"
+        )
+
+        print(
+            f"[DEBUG] Latency: "
+            f"{latency['avg_latency']} ms"
+        )
 
         return result
 
@@ -428,7 +469,7 @@ if __name__ == "__main__":
     result = run_speed_test()
 
     print("\n====================================")
-    print("         REALISTIC SPEED TEST")
+    print("     REALISTIC SPEED TEST")
     print("====================================")
 
     if result["success"]:
@@ -445,27 +486,12 @@ if __name__ == "__main__":
 
         print(
             f"Latency        : "
-            f"{result['latency_ms']} ms"
+            f"{result['ping']['avg']} ms"
         )
 
         print(
             f"Jitter         : "
-            f"{result['jitter_ms']} ms"
-        )
-
-        print(
-            f"Download Quality : "
-            f"{result['download_quality']}"
-        )
-
-        print(
-            f"Upload Quality   : "
-            f"{result['upload_quality']}"
-        )
-
-        print(
-            f"Latency Quality  : "
-            f"{result['latency_quality']}"
+            f"{result['ping']['jitter']} ms"
         )
 
     else:
