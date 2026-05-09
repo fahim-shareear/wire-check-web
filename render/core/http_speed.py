@@ -18,7 +18,7 @@ UPLOAD_FALLBACK = "https://httpbin.org/post"
 
 # ── Configuration ──────────────────────────────────────────────
 
-DOWNLOAD_THREADS = 3
+DOWNLOAD_THREADS = 1
 DOWNLOAD_TIMEOUT = 60
 UPLOAD_TIMEOUT = 60
 
