@@ -5,7 +5,7 @@ import traceback
 from flask import Flask, render_template, Response, jsonify
 from flask_cors import CORS
 
-# Import test modules with correct names
+# Import test modules - CORRECT render.core imports
 from render.core.http_ping import run_ping_test
 from render.core.http_speed import run_speed_test
 from render.core.http_stability import run_stability_test
