@@ -6,10 +6,10 @@ from flask import Flask, render_template, Response, jsonify
 from flask_cors import CORS
 
 # Import test modules with correct names
-from core.http_ping import run_ping_test
-from core.http_speed import run_speed_test
-from core.http_stability import run_stability_test
-from core.isp_info import get_isp_info
+from render.core.http_ping import run_ping_test
+from render.core.http_speed import run_speed_test
+from render.core.http_stability import run_stability_test
+from render.core.isp_info import get_isp_info
 
 
 # Initialize Flask app
