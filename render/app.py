@@ -33,13 +33,13 @@ def index():
 
 @app.route("/api/isp")
 def api_isp():
-    """Get ISP information endpoint"""
+    """Get ISP information - auto-detects client IP"""
     try:
+        # ipinfo.io will auto-detect the client IP from the request
         result = get_isp_info()
         return jsonify(result)
     except Exception as e:
         print(f"[ERROR] ISP info failed: {str(e)}")
-        print(traceback.format_exc())
         return jsonify({
             "success": False,
             "error": f"ISP detection failed: {str(e)}"
