@@ -1,354 +1,378 @@
-"""
-Speed testing module - Real ISP speed measurement
-Measures sustained throughput over 15 seconds for accurate ISP speed
-"""
+import os
 import time
 import requests
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
-# Download and upload test targets
+# ── Test endpoints ─────────────────────────────────────────────
+
 DOWNLOAD_TARGETS = [
-    "https://httpbin.org/bytes/100000000",           # 100MB file
-    "https://speed.cloudflare.com/__down?bytes=100000000",  # Fallback
+    "https://speed.cloudflare.com/__down?bytes=100000000",  # 100MB
+    "https://speed.cloudflare.com/__down?bytes=50000000",   # 50MB fallback
+    "https://proof.ovh.net/files/100Mb.dat",                # OVH fallback
 ]
 
-UPLOAD_TARGET = "https://httpbin.org/post"
+UPLOAD_TARGET = "https://speed.cloudflare.com/__up"
+UPLOAD_FALLBACK = "https://httpbin.org/post"
 
-# Test duration in seconds - long enough for accurate measurement
-TEST_DURATION = 15
 
-# Chunk size for realistic streaming
-CHUNK_SIZE = 8192
+# ── Configuration ──────────────────────────────────────────────
 
+DOWNLOAD_THREADS = 3
+DOWNLOAD_TIMEOUT = 60
+UPLOAD_TIMEOUT = 60
+
+DOWNLOAD_CHUNK_SIZE = 1024 * 256   # 256KB
+UPLOAD_SIZE = 10 * 1024 * 1024     # 10MB
+
+
+# ── Download Worker ────────────────────────────────────────────
+
+def _download_once(url, timeout=DOWNLOAD_TIMEOUT):
+    """
+    Download a file and return bytes downloaded.
+    """
+    response = requests.get(url, timeout=timeout, stream=True)
+    response.raise_for_status()
+
+    total_bytes = 0
+
+    for chunk in response.iter_content(chunk_size=DOWNLOAD_CHUNK_SIZE):
+        if chunk:
+            total_bytes += len(chunk)
+
+    return total_bytes
+
+
+# ── Download Test ──────────────────────────────────────────────
 
 def test_download_speed():
     """
-    Measure REAL download speed by downloading a large file 
-    and measuring sustained throughput over TEST_DURATION seconds.
-    
-    This measures your ACTUAL ISP download speed, not peak burst speed.
-    
-    How it works:
-    1. Start downloading a large file (100MB)
-    2. Measure bytes received over TEST_DURATION seconds (15 sec)
-    3. Calculate: (bytes * 8 bits) / duration in seconds = speed in bits/sec
-    4. Stop after TEST_DURATION elapsed
-    
-    Returns:
-        dict: {success, speed_bps, speed_mbps, bytes, duration} or error
+    Measures download speed using parallel streams.
+    Uses REAL wall-clock timing instead of per-thread timing.
     """
-    
+
     for url in DOWNLOAD_TARGETS:
+
         try:
-            print(f"[SPEED TEST] Starting download test")
-            print(f"[SPEED TEST] Target: {url}")
-            print(f"[SPEED TEST] Duration: {TEST_DURATION} seconds")
-            
-            start_time = time.perf_counter()
-            total_bytes = 0
-            
-            # Start downloading the file in stream mode
-            response = requests.get(url, timeout=45, stream=True)
-            response.raise_for_status()
-            
-            # Download chunks and measure throughput over time
-            for chunk in response.iter_content(chunk_size=CHUNK_SIZE):
-                if chunk:
-                    total_bytes += len(chunk)
-                
-                # Check elapsed time
-                elapsed = time.perf_counter() - start_time
-                
-                # Stop after TEST_DURATION seconds
-                if elapsed >= TEST_DURATION:
-                    print(f"[SPEED TEST] Reached {TEST_DURATION}s limit, stopping download")
-                    break
-            
-            end_time = time.perf_counter()
-            duration = end_time - start_time
-            
-            # Validate we got meaningful data
-            if duration > 2 and total_bytes > 0:
-                # Calculate speed in bits per second
-                speed_bps = (total_bytes * 8) / duration
-                speed_mbps = round(speed_bps / 1_000_000, 2)
-                
-                print(f"[SPEED TEST] ✓ Download complete")
-                print(f"[SPEED TEST] Data: {total_bytes:,} bytes in {duration:.2f} seconds")
-                print(f"[SPEED TEST] Speed: {speed_mbps} Mbps")
-                
-                return {
-                    "success": True,
-                    "speed_bps": speed_bps,
-                    "speed_mbps": speed_mbps,
-                    "bytes": total_bytes,
-                    "duration": round(duration, 2),
-                }
-            else:
-                print(f"[SPEED TEST] ✗ Download failed: duration={duration}, bytes={total_bytes}")
+            print(f"[DEBUG] Attempting download from: {url}")
+
+            # Warm-up connection (not measured)
+            try:
+                requests.get(url, timeout=10, stream=True).close()
+            except Exception:
+                pass
+
+            results = []
+
+            # REAL wall-clock timing
+            overall_start = time.perf_counter()
+
+            with ThreadPoolExecutor(max_workers=DOWNLOAD_THREADS) as executor:
+
+                futures = [
+                    executor.submit(_download_once, url)
+                    for _ in range(DOWNLOAD_THREADS)
+                ]
+
+                for future in as_completed(futures):
+                    try:
+                        bytes_downloaded = future.result()
+
+                        if bytes_downloaded > 0:
+                            results.append(bytes_downloaded)
+
+                    except Exception as e:
+                        print(f"[DEBUG] Download thread failed: {e}")
+
+            overall_end = time.perf_counter()
+
+            if not results:
+                print("[DEBUG] All download threads failed")
                 continue
-        
-        except requests.exceptions.Timeout:
-            print(f"[SPEED TEST] ✗ Download timeout from {url}")
-            continue
-        
-        except requests.exceptions.ConnectionError as e:
-            print(f"[SPEED TEST] ✗ Connection error: {str(e)}")
-            continue
-        
-        except Exception as e:
-            print(f"[SPEED TEST] ✗ Download error: {str(e)}")
-            continue
-    
-    # All targets failed
-    print(f"[SPEED TEST] ✗ All download targets failed")
-    return {
-        "success": False,
-        "error": "Download test failed. Check your internet connection."
-    }
 
+            total_duration = overall_end - overall_start
+            total_bytes = sum(results)
 
-def test_upload_speed():
-    """
-    Measure REAL upload speed by uploading data in chunks
-    and measuring sustained throughput over TEST_DURATION seconds.
-    
-    This measures your ACTUAL ISP upload speed, not peak burst speed.
-    
-    How it works:
-    1. Generate data chunks (256KB each - realistic streaming size)
-    2. Upload continuously for TEST_DURATION seconds (15 sec)
-    3. Calculate: (bytes_uploaded * 8 bits) / duration in seconds = speed in bits/sec
-    4. Stop after TEST_DURATION elapsed
-    
-    Note: Single-threaded upload (thread=1) for accurate ISP measurement
-    
-    Returns:
-        dict: {success, speed_bps, speed_mbps, bytes, duration} or error
-    """
-    
-    chunk_size = 256 * 1024  # 256KB chunks - realistic for ISP testing
-    total_uploaded = 0
-    
-    try:
-        print(f"[SPEED TEST] Starting upload test")
-        print(f"[SPEED TEST] Target: {UPLOAD_TARGET}")
-        print(f"[SPEED TEST] Chunk size: {chunk_size / 1024:.0f}KB")
-        print(f"[SPEED TEST] Duration: {TEST_DURATION} seconds")
-        print(f"[SPEED TEST] Mode: Single-threaded (thread=1)")
-        
-        start_time = time.perf_counter()
-        
-        # Generator function that yields data chunks
-        def data_generator():
-            """
-            Generate data chunks continuously until TEST_DURATION elapsed.
-            Simulates realistic streaming upload.
-            """
-            nonlocal total_uploaded
-            
-            while True:
-                # Check elapsed time
-                elapsed = time.perf_counter() - start_time
-                
-                # Stop if we've reached the time limit
-                if elapsed >= TEST_DURATION:
-                    print(f"[SPEED TEST] Reached {TEST_DURATION}s limit, stopping upload")
-                    break
-                
-                # Generate a 256KB chunk of data
-                chunk = b"x" * chunk_size
-                total_uploaded += len(chunk)
-                
-                yield chunk
-        
-        # Upload with streaming (chunked)
-        response = requests.post(
-            UPLOAD_TARGET,
-            data=data_generator(),
-            timeout=45,
-            headers={"Content-Type": "application/octet-stream"},
-            stream=True
-        )
-        
-        end_time = time.perf_counter()
-        duration = end_time - start_time
-        
-        # Validate response and data
-        if duration > 2 and response.status_code == 200 and total_uploaded > 0:
-            # Calculate speed in bits per second
-            speed_bps = (total_uploaded * 8) / duration
-            speed_mbps = round(speed_bps / 1_000_000, 2)
-            
-            print(f"[SPEED TEST] ✓ Upload complete")
-            print(f"[SPEED TEST] Data: {total_uploaded:,} bytes in {duration:.2f} seconds")
-            print(f"[SPEED TEST] Speed: {speed_mbps} Mbps")
-            
+            if total_duration <= 0:
+                continue
+
+            speed_bps = (total_bytes * 8) / total_duration
+            speed_mbps = speed_bps / 1_000_000
+
+            print(
+                f"[DEBUG] Downloaded {total_bytes} bytes "
+                f"in {total_duration:.2f}s"
+            )
+
+            print(f"[DEBUG] Download speed: {speed_mbps:.2f} Mbps")
+
             return {
                 "success": True,
                 "speed_bps": speed_bps,
-                "speed_mbps": speed_mbps,
-                "bytes": total_uploaded,
-                "duration": round(duration, 2),
+                "speed_mbps": round(speed_mbps, 2),
+                "bytes": total_bytes,
+                "duration": round(total_duration, 2),
+                "threads": len(results),
             }
-        else:
-            print(f"[SPEED TEST] ✗ Upload failed: status={response.status_code}, duration={duration}, bytes={total_uploaded}")
-            return {
-                "success": False,
-                "error": "Upload test failed with bad response."
-            }
-    
-    except requests.exceptions.Timeout:
-        print(f"[SPEED TEST] ✗ Upload timeout")
-        return {
-            "success": False,
-            "error": "Upload test timed out."
-        }
-    
-    except Exception as e:
-        print(f"[SPEED TEST] ✗ Upload error: {str(e)}")
-        return {
-            "success": False,
-            "error": f"Upload test failed: {str(e)}"
-        }
 
+        except requests.exceptions.Timeout:
+            print(f"[DEBUG] Download timeout from {url}")
+            continue
+
+        except requests.exceptions.ConnectionError as e:
+            print(f"[DEBUG] Download connection error from {url}: {e}")
+            continue
+
+        except Exception as e:
+            print(f"[DEBUG] Download error from {url}: {e}")
+            continue
+
+    return {
+        "success": False,
+        "error": "Download test failed on all endpoints."
+    }
+
+
+# ── Upload Test ────────────────────────────────────────────────
+
+def test_upload_speed():
+    """
+    Measures upload speed using RANDOM DATA
+    to prevent compression/cache optimization.
+    """
+
+    # RANDOM non-compressible payload
+    data = os.urandom(UPLOAD_SIZE)
+
+    targets = [UPLOAD_TARGET, UPLOAD_FALLBACK]
+
+    for url in targets:
+
+        try:
+            print(
+                f"[DEBUG] Starting upload test to {url} "
+                f"({UPLOAD_SIZE} bytes)"
+            )
+
+            start = time.perf_counter()
+
+            response = requests.post(
+                url,
+                data=data,
+                timeout=UPLOAD_TIMEOUT,
+                headers={
+                    "Content-Type": "application/octet-stream",
+                    "Cache-Control": "no-cache",
+                },
+            )
+
+            end = time.perf_counter()
+
+            duration = end - start
+
+            print(
+                f"[DEBUG] Upload response: "
+                f"status={response.status_code}, "
+                f"duration={duration:.2f}s"
+            )
+
+            if duration <= 0:
+                continue
+
+            if response.status_code == 200:
+
+                speed_bps = (UPLOAD_SIZE * 8) / duration
+                speed_mbps = speed_bps / 1_000_000
+
+                print(f"[DEBUG] Upload speed: {speed_mbps:.2f} Mbps")
+
+                return {
+                    "success": True,
+                    "speed_bps": speed_bps,
+                    "speed_mbps": round(speed_mbps, 2),
+                    "bytes": UPLOAD_SIZE,
+                    "duration": round(duration, 2),
+                }
+
+            else:
+                print(
+                    f"[DEBUG] Upload got status "
+                    f"{response.status_code}"
+                )
+
+        except requests.exceptions.Timeout:
+            print(f"[DEBUG] Upload timeout to {url}")
+            continue
+
+        except requests.exceptions.ConnectionError as e:
+            print(f"[DEBUG] Upload connection error to {url}: {e}")
+            continue
+
+        except Exception as e:
+            print(f"[DEBUG] Upload error to {url}: {e}")
+            continue
+
+    return {
+        "success": False,
+        "error": "Upload test failed on all endpoints."
+    }
+
+
+# ── Quality Labels ─────────────────────────────────────────────
 
 def get_quality_label(metric, value):
-    """
-    Get quality label for speed metrics based on REAL ISP standards.
-    
-    NOT based on server-to-server speed, but on actual ISP package speeds.
-    
-    Download Speed Standards:
-      < 5 Mbps = Poor (unusable for modern internet)
-      5-25 Mbps = Average (basic web browsing only)
-      25-100 Mbps = Good (HD streaming, video calls, normal use)
-      > 100 Mbps = Excellent (4K streaming, gaming, multiple users)
-    
-    Upload Speed Standards:
-      < 1 Mbps = Poor (can't upload)
-      1-10 Mbps = Average (basic uploads, Zoom)
-      10-50 Mbps = Good (video calls, live streaming, large uploads)
-      > 50 Mbps = Excellent (professional streaming, content creation)
-    
-    Args:
-        metric (str): "download" or "upload"
-        value (float): speed in Mbps
-    
-    Returns:
-        str: Quality label (Excellent, Good, Average, Poor)
-    """
-    
+
     thresholds = {
         "download": [
-            (100, "Excellent"),    # > 100 Mbps
-            (25, "Good"),          # 25-100 Mbps (Your 30 Mbps = Good)
-            (5, "Average"),        # 5-25 Mbps
-            (0, "Poor")            # < 5 Mbps
+            (100, "Excellent"),
+            (25, "Good"),
+            (5, "Average"),
+            (0, "Poor"),
         ],
+
         "upload": [
-            (50, "Excellent"),     # > 50 Mbps
-            (10, "Good"),          # 10-50 Mbps
-            (1, "Average"),        # 1-10 Mbps
-            (0, "Poor")            # < 1 Mbps
+            (50, "Excellent"),
+            (10, "Good"),
+            (2, "Average"),
+            (0, "Poor"),
         ],
     }
-    
-    # Find matching threshold
+
     for threshold, label in thresholds[metric]:
         if value >= threshold:
             return label
-    
+
     return "Poor"
 
 
+# ── Main Speed Test ────────────────────────────────────────────
+
 def run_speed_test():
-    """
-    Main speed test function - runs download and upload tests sequentially.
-    
-    Process:
-    1. Run download test (15 seconds)
-    2. Run upload test (15 seconds)
-    3. Calculate quality labels
-    4. Return complete results
-    
-    Total time: ~30-40 seconds (includes overhead)
-    
-    Returns:
-        dict: Complete speed test results with download, upload, quality ratings
-    """
-    
-    print("[SPEED TEST] ========================================")
-    print("[SPEED TEST] Starting Real ISP Speed Measurement")
-    print("[SPEED TEST] ========================================")
-    
-    # Run download test
-    print("[SPEED TEST] Phase 1/2: Download Test")
-    print("[SPEED TEST] ----------------------------------------")
-    download = test_download_speed()
-    print()
-    
-    # Check download result
-    if not download["success"]:
-        print(f"[SPEED TEST] ✗ Download failed: {download.get('error')}")
+
+    try:
+
+        print("[DEBUG] Starting speed test suite")
+
+        # ── Download ─────────────────────
+
+        print("[DEBUG] Testing download speed...")
+        download = test_download_speed()
+
+        if not download["success"]:
+            return {
+                "success": False,
+                "error": download.get(
+                    "error",
+                    "Download test failed."
+                )
+            }
+
+        # ── Upload ───────────────────────
+
+        print("[DEBUG] Testing upload speed...")
+        upload = test_upload_speed()
+
+        if not upload["success"]:
+            return {
+                "success": False,
+                "error": upload.get(
+                    "error",
+                    "Upload test failed."
+                )
+            }
+
+        # ── Final Results ────────────────
+
+        download_mbps = download["speed_mbps"]
+        upload_mbps = upload["speed_mbps"]
+
+        result = {
+
+            "success": True,
+
+            "server": {
+                "name": "Cloudflare Speed Test",
+                "country": "Global CDN",
+                "sponsor": "Cloudflare",
+                "latency": 0,
+            },
+
+            "download_bps": download["speed_bps"],
+            "upload_bps": upload["speed_bps"],
+
+            "download_mbps": download_mbps,
+            "upload_mbps": upload_mbps,
+
+            "download_quality": get_quality_label(
+                "download",
+                download_mbps
+            ),
+
+            "upload_quality": get_quality_label(
+                "upload",
+                upload_mbps
+            ),
+
+            "download_bytes": download["bytes"],
+            "upload_bytes": upload["bytes"],
+
+            "download_duration": download["duration"],
+            "upload_duration": upload["duration"],
+
+            "download_threads": download["threads"],
+        }
+
+        print(
+            f"[DEBUG] Speed test complete: "
+            f"{download_mbps} Mbps down, "
+            f"{upload_mbps} Mbps up"
+        )
+
+        return result
+
+    except Exception as e:
+
+        import traceback
+
+        print(f"[ERROR] Speed test crashed: {e}")
+        traceback.print_exc()
+
         return {
             "success": False,
-            "error": download.get("error", "Download test failed.")
+            "error": f"Speed test failed: {e}"
         }
-    
-    # Run upload test
-    print("[SPEED TEST] Phase 2/2: Upload Test")
-    print("[SPEED TEST] ----------------------------------------")
-    upload = test_upload_speed()
-    print()
-    
-    # Check upload result
-    if not upload["success"]:
-        print(f"[SPEED TEST] ✗ Upload failed: {upload.get('error')}")
-        return {
-            "success": False,
-            "error": upload.get("error", "Upload test failed.")
-        }
-    
-    # Extract speeds
-    download_mbps = download["speed_mbps"]
-    upload_mbps = upload["speed_mbps"]
-    
-    # Build result
-    result = {
-        "success": True,
-        "server": {
-            "name": "Cloudflare / httpbin",
-            "country": "Global CDN",
-            "sponsor": "Cloudflare",
-            "latency": 0,
-        },
-        "download_bps": download["speed_bps"],
-        "upload_bps": upload["speed_bps"],
-        "download_mbps": download_mbps,
-        "upload_mbps": upload_mbps,
-        "download_quality": get_quality_label("download", download_mbps),
-        "upload_quality": get_quality_label("upload", upload_mbps),
-        "download_bytes": download["bytes"],
-        "upload_bytes": upload["bytes"],
-        "download_duration": download["duration"],
-        "upload_duration": upload["duration"],
-    }
-    
-    # Print summary
-    print("[SPEED TEST] ========================================")
-    print("[SPEED TEST] Speed Test Complete")
-    print("[SPEED TEST] ========================================")
-    print(f"[SPEED TEST] Download: {download_mbps} Mbps ({result['download_quality']})")
-    print(f"[SPEED TEST] Upload: {upload_mbps} Mbps ({result['upload_quality']})")
-    print("[SPEED TEST] ========================================")
-    print()
-    
-    return result
 
 
-# Allow testing directly
+# ── Entry Point ────────────────────────────────────────────────
+
 if __name__ == "__main__":
+
     result = run_speed_test()
-    print("Final Result:")
-    print(result)
+
+    print("\n==============================")
+    print("        SPEED TEST")
+    print("==============================")
+
+    if result["success"]:
+
+        print(f"Download : {result['download_mbps']} Mbps")
+        print(f"Upload   : {result['upload_mbps']} Mbps")
+
+        print(f"Download Quality : {result['download_quality']}")
+        print(f"Upload Quality   : {result['upload_quality']}")
+
+        print(f"Threads Used     : {result['download_threads']}")
+
+        print(
+            f"Download Duration: "
+            f"{result['download_duration']}s"
+        )
+
+        print(
+            f"Upload Duration  : "
+            f"{result['upload_duration']}s"
+        )
+
+    else:
+        print(f"ERROR: {result['error']}")
