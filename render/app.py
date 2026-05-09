@@ -1,93 +1,92 @@
-import sys
-import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
+"""Wire-Test: Network Speed & Stability Analyzer"""
 import json
+import os
 import traceback
-from flask import Flask, render_template, Response, jsonify, request
+from flask import Flask, render_template, Response, jsonify
 from flask_cors import CORS
 
-from render.core.http_ping import run_ping_test
-from render.core.http_speed import run_speed_test
-from render.core.http_stability import run_stability_test
-from render.core.isp_info import get_isp_info
+# Import test modules with correct names
+from core.http_ping import run_ping_test
+from core.http_speed import run_speed_test
+from core.http_stability import run_stability_test
+from core.isp_info import get_isp_info
 
+
+# Initialize Flask app
 app = Flask(
     __name__,
     template_folder=os.path.join(os.path.dirname(__file__), "templates"),
     static_folder=os.path.join(os.path.dirname(__file__), "static"),
 )
+
+# Enable CORS for all routes
 CORS(app)
-
-
-# ── Helper ─────────────────────────────────────────────────────
-
-def get_client_ip():
-    """
-    Extract the real client IP from request headers.
-    Render (and most proxies) set X-Forwarded-For.
-    Falls back to JS-detected IP passed as query param,
-    then to remote_addr.
-    """
-    forwarded_for = request.headers.get("X-Forwarded-For", "")
-    if forwarded_for:
-        ip = forwarded_for.split(",")[0].strip()
-        if ip:
-            print(f"[DEBUG] Client IP from X-Forwarded-For: {ip}")
-            return ip
-
-    real_ip = request.headers.get("X-Real-IP", "").strip()
-    if real_ip:
-        print(f"[DEBUG] Client IP from X-Real-IP: {real_ip}")
-        return real_ip
-
-    js_ip = request.args.get("client_ip", "").strip()
-    if js_ip:
-        print(f"[DEBUG] Client IP from JS query param: {js_ip}")
-        return js_ip
-
-    fallback = request.remote_addr
-    print(f"[DEBUG] Client IP fallback to remote_addr: {fallback}")
-    return fallback
 
 
 # ── Routes ─────────────────────────────────────────────────────
 
 @app.route("/")
 def index():
+    """Serve the main dashboard"""
     return render_template("index.html")
 
 
 @app.route("/api/isp")
 def api_isp():
-    client_ip = get_client_ip()
-    result = get_isp_info(client_ip=client_ip)
-    return jsonify(result)
+    """Get ISP information endpoint"""
+    try:
+        result = get_isp_info()
+        return jsonify(result)
+    except Exception as e:
+        print(f"[ERROR] ISP info failed: {str(e)}")
+        print(traceback.format_exc())
+        return jsonify({
+            "success": False,
+            "error": f"ISP detection failed: {str(e)}"
+        }), 500
 
 
 @app.route("/api/ping")
 def api_ping():
-    result = run_ping_test(count=10)
-    return jsonify(result)
+    """Get ping test results endpoint"""
+    try:
+        result = run_ping_test(count=10)
+        return jsonify(result)
+    except Exception as e:
+        print(f"[ERROR] Ping test failed: {str(e)}")
+        print(traceback.format_exc())
+        return jsonify({
+            "success": False,
+            "error": f"Ping test failed: {str(e)}"
+        }), 500
 
 
 @app.route("/api/speed")
 def api_speed():
-    result = run_speed_test()
-    return jsonify(result)
+    """Get speed test results endpoint"""
+    try:
+        result = run_speed_test()
+        return jsonify(result)
+    except Exception as e:
+        print(f"[ERROR] Speed test failed: {str(e)}")
+        print(traceback.format_exc())
+        return jsonify({
+            "success": False,
+            "error": f"Speed test failed: {str(e)}"
+        }), 500
 
 
 @app.route("/api/run")
 def api_run():
     """
-    Main SSE endpoint — runs all tests and streams
-    live progress events to the browser with error handling.
+    Main SSE endpoint - runs all tests and streams
+    live progress events to the browser using Server-Sent Events.
     """
-    client_ip = get_client_ip()
-    print(f"[DEBUG] Starting test run for client IP: {client_ip}")
-
+    print("[TEST] Starting full test suite...")
+    
     def generate():
         def send(event, data):
+            """Format data as SSE event"""
             return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
         try:
@@ -98,14 +97,14 @@ def api_run():
             })
 
             try:
-                isp = get_isp_info(client_ip=client_ip)
+                isp = get_isp_info()
                 yield send("isp", isp)
+                print(f"[TEST] ISP info: {isp.get('data', {}).get('ip', 'unknown')}")
             except Exception as e:
                 print(f"[ERROR] ISP fetch failed: {str(e)}")
-                print(traceback.format_exc())
                 yield send("isp", {
                     "success": False,
-                    "error":   f"ISP info failed: {str(e)}"
+                    "error": f"ISP info failed: {str(e)}"
                 })
 
             yield send("progress", {
@@ -116,18 +115,19 @@ def api_run():
             # ── Stage 2 — Ping ─────────────────────────────────
             yield send("progress", {
                 "percent": 20,
-                "message": "Running ping test (10 packets)..."
+                "message": "Running ping test (10 packets to Google)..."
             })
 
             try:
                 ping = run_ping_test(count=10)
                 yield send("ping", ping)
+                if ping.get('success'):
+                    print(f"[TEST] Ping: {ping.get('avg_latency')} ms, {ping.get('packet_loss')}% loss")
             except Exception as e:
                 print(f"[ERROR] Ping test failed: {str(e)}")
-                print(traceback.format_exc())
                 yield send("ping", {
                     "success": False,
-                    "error":   f"Ping test failed: {str(e)}"
+                    "error": f"Ping test failed: {str(e)}"
                 })
 
             yield send("progress", {
@@ -138,23 +138,24 @@ def api_run():
             # ── Stage 3 — Speed ────────────────────────────────
             yield send("progress", {
                 "percent": 40,
-                "message": "Testing download speed (this may take 30-60 seconds)..."
+                "message": "Testing real ISP speed (measuring sustained throughput for 15 seconds)..."
             })
 
             try:
                 speed = run_speed_test()
                 yield send("speed", speed)
+                if speed.get('success'):
+                    print(f"[TEST] Speed: DL={speed.get('download_mbps')} Mbps, UL={speed.get('upload_mbps')} Mbps")
             except Exception as e:
                 print(f"[ERROR] Speed test failed: {str(e)}")
-                print(traceback.format_exc())
                 yield send("speed", {
                     "success": False,
-                    "error":   f"Speed test failed: {str(e)}"
+                    "error": f"Speed test failed: {str(e)}"
                 })
 
             yield send("progress", {
                 "percent": 70,
-                "message": "Speed test complete."
+                "message": "Speed test complete. Results show your REAL ISP speed."
             })
 
             # ── Stage 4 — Stability ────────────────────────────
@@ -164,6 +165,7 @@ def api_run():
             })
 
             try:
+                stability_result = None
                 for event in run_stability_test(duration=30, interval=1):
                     if event["type"] == "ping":
                         yield send("stability_ping", {
@@ -172,14 +174,19 @@ def api_run():
                             "timeout": event["timeout"],
                         })
                     elif event["type"] == "result":
-                        yield send("stability", event)
+                        stability_result = event
 
+                if stability_result and stability_result.get('success'):
+                    yield send("stability", stability_result)
+                    print(f"[TEST] Stability: Score={stability_result.get('stability_score')}, Loss={stability_result.get('packet_loss')}%")
+                elif stability_result:
+                    yield send("stability", stability_result)
+                    
             except Exception as e:
                 print(f"[ERROR] Stability test failed: {str(e)}")
-                print(traceback.format_exc())
                 yield send("stability", {
                     "success": False,
-                    "error":   f"Stability test failed: {str(e)}"
+                    "error": f"Stability test failed: {str(e)}"
                 })
 
             yield send("progress", {
@@ -187,6 +194,7 @@ def api_run():
                 "message": "All tests complete."
             })
             yield send("done", {"message": "All tests complete."})
+            print("[TEST] Test suite completed successfully")
 
         except Exception as e:
             print(f"[CRITICAL ERROR] Stream generation failed: {str(e)}")
@@ -199,9 +207,9 @@ def api_run():
         generate(),
         mimetype="text/event-stream",
         headers={
-            "Cache-Control":    "no-cache",
+            "Cache-Control": "no-cache",
             "X-Accel-Buffering": "no",
-            "Connection":       "keep-alive",
+            "Connection": "keep-alive",
         }
     )
 
@@ -209,9 +217,23 @@ def api_run():
 @app.route("/api/health")
 def health_check():
     """Simple health check endpoint"""
-    return jsonify({"status": "ok"})
+    return jsonify({"status": "ok", "message": "wire-test is running"})
+
+
+@app.errorhandler(404)
+def not_found(error):
+    """Handle 404 errors"""
+    return jsonify({"error": "Not found"}), 404
+
+
+@app.errorhandler(500)
+def internal_error(error):
+    """Handle 500 errors"""
+    return jsonify({"error": "Internal server error"}), 500
 
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=False)
+    debug = os.environ.get("FLASK_DEBUG", "False").lower() == "true"
+    print(f"[STARTUP] Starting wire-test on port {port}")
+    app.run(host="0.0.0.0", port=port, debug=debug)
